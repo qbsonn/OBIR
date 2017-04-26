@@ -13,8 +13,6 @@ byte mac[] = {
 
 EthernetUDP udp;
 
-
-
 const int MAX_BUFFER = 255;
 int currentValue = 255;
 
@@ -36,6 +34,16 @@ IPAddress ip(192, 168, 2, 140);
 
 unsigned short valueP;
 
+struct coapHeader
+{
+  byte ver;
+  byte type;
+  byte token;
+  byte code;
+  byte  messageID[2];
+};
+
+  
 
 void setup() {
   Serial.begin(115200);
@@ -59,11 +67,12 @@ void loop() {
 }
 
 
-
+/*
 void receivePacket(){
     char packetBuffer[MAX_BUFFER];
     udp.read(packetBuffer, MAX_BUFFER);
-  
+
+  Serial.println("message");
     if (packetBuffer[0]=='g')
     {
         unsigned short potentiometrValue = getPotentiometrValueOptionSelected();
@@ -71,6 +80,48 @@ void receivePacket(){
     }
     
 }
+*/
+void receivePacket(){
+   byte packetBuffer[MAX_BUFFER];
+    udp.read(packetBuffer, MAX_BUFFER);
+
+    Serial.println("message");
+    /*
+    if (packetBuffer[0]=='g')
+    {
+        unsigned short potentiometrValue = getPotentiometrValueOptionSelected();
+        sendResponse(potentiometrValue);
+    }
+    */
+
+
+    //Trzeba uporzadkowac!!!
+     coapHeader cHeader;
+   
+     cHeader.ver=packetBuffer[0]>>6;
+     cHeader.type=(packetBuffer[0]<<2)/64;
+     cHeader.type=(packetBuffer[0]<<4)/16;
+    
+     cHeader.messageID[0]=packetBuffer[2];
+     cHeader.messageID[1]=packetBuffer[3];
+    
+   //  Serial.println( cHeader.messageID[0]);
+    // Serial.println( cHeader.messageID[1]);
+ 
+    coapHeader responseHeader;
+ 
+    responseHeader.ver= 1;
+    responseHeader.type=2;
+    responseHeader.code=(byte)64;
+    responseHeader.token=cHeader.token;
+    responseHeader.messageID[0]=cHeader.messageID[0];
+    responseHeader.messageID[1]=cHeader.messageID[1];
+    
+    sendResponse(responseHeader);
+
+}
+
+
 
 unsigned short getPotentiometrValueOptionSelected()
 {
@@ -105,7 +156,7 @@ unsigned short receivePotentiometrValueFromMini(){
     return payload.value;
   }
 }
-
+/*
 void sendResponse(unsigned short value){
   udp.beginPacket(udp.remoteIP(), udp.remotePort());
  
@@ -121,6 +172,25 @@ void sendResponse(unsigned short value){
 
     int len = udp.write(response, 4);
     udp.endPacket();
+}
+
+*/
+
+void sendResponse(coapHeader cHeader ){
+  udp.beginPacket(udp.remoteIP(), udp.remotePort());
+ 
+  byte message[4];
+  byte x=1;
+  x=x<<2;
+  x=x+cHeader.type;
+  x=x<<4;
+  x=x+cHeader.token;
+  message[0]=x;
+  message[1]=cHeader.code;
+  message[2]=cHeader.messageID[0];
+  message[3]=cHeader.messageID[1];
+  int len = udp.write(message, sizeof (message));
+  udp.endPacket();
 }
 
 
