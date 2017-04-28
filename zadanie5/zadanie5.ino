@@ -42,9 +42,43 @@ struct coapHeader
   byte code;
   byte  messageID[2];
   byte *token;
-};
 
   
+};
+
+struct CoapResponse
+{
+  byte optLen;
+  byte optTyp;
+  byte *optValue;
+};
+
+struct Option
+{
+ byte optionType;
+ byte optionLength;
+ byte *optionValue;
+  
+};
+
+
+//int acceptedFormat[2];
+
+enum acceptedFormat
+{
+ PLAIN=0, LINKFORMAT=40
+};
+
+enum optionTypes
+{
+  URI_PATH=11, CONTENT_FORMAT=12, ACCEPT=17
+  
+};
+
+
+
+
+byte packetBuffer[MAX_BUFFER];
 
 void setup() {
   Serial.begin(115200);
@@ -83,8 +117,10 @@ void receivePacket(){
 }
 */
 void receivePacket(){
-   byte packetBuffer[MAX_BUFFER];
-    udp.read(packetBuffer, MAX_BUFFER);
+ //  byte packetBuffer[MAX_BUFFER];
+    int len=udp.read(packetBuffer, MAX_BUFFER);
+
+    Serial.println(len);
 
     Serial.println("message");
     /*
@@ -107,9 +143,7 @@ void receivePacket(){
       cHeader.code=packetBuffer[1];
      cHeader.messageID[0]=packetBuffer[2];
      cHeader.messageID[1]=packetBuffer[3];
-
-    if (cHeader.tokenLength>0)
-    {
+     
       byte tokentab[cHeader.tokenLength];
       for (int i=0; i<cHeader.tokenLength; i++)
       {
@@ -117,16 +151,115 @@ void receivePacket(){
         Serial.println(tokentab[i]);
       }
       
-      cHeader.token=tokentab;
-      Serial.println("CHEADER");
-          Serial.println(*cHeader.token);
+     
+      cHeader.token=(packetBuffer+4);
+          
       
-    }
+    
   
 if( cHeader.ver!=1)
   {
 Serial.println("Zły format nagłówka");
   }
+
+//int bytesLeft=len-4-cHeader.tokenLength;
+byte optionHeader;
+int optionCounter=0;
+int currentByteNumber=4+cHeader.tokenLength;
+
+// Response with options
+CoapResponse coapResponse;
+
+while (currentByteNumber<len)
+{
+    if (packetBuffer[currentByteNumber]!=255)
+      {
+        optionHeader=packetBuffer[currentByteNumber];
+        byte optType=byte(optionHeader>>4);
+        byte optLen=byte(optionHeader<<4)/16;
+         Serial.print("Dlugosc opcji ");
+        Serial.println(optLen);
+
+        // Option delta
+        if (optType>12)
+        {
+         
+          optType+=packetBuffer[currentByteNumber+1];
+          currentByteNumber+=optType-12;
+          
+        }
+
+        // Option length
+        if (optLen>12)
+        {
+          currentByteNumber+=optLen-12;
+           int tempLen=0;
+              // Length extension bytes
+              if (optLen-12==2)
+                   {
+         
+                          tempLen+= packetBuffer[currentByteNumber];
+                          tempLen+= packetBuffer[currentByteNumber+1];
+                   }
+              else
+                   {
+                          tempLen+= packetBuffer[currentByteNumber];
+                    }
+
+            currentByteNumber+=tempLen;
+          
+        }
+        Serial.print("Nr opcji ");
+        Serial.println(optType);
+      
+        optionCounter++;
+
+
+        if (optType==optionTypes.ACCEPT)
+        {
+          int optionValue=0;
+              if (optLen==0)
+              { //plaintext
+                  optionValue=0;
+                    //zapamietanie
+                    
+                
+              }
+              else
+              {
+                
+                  for (int i=0;i<optLen;i++)
+                  {
+                        optionValue+=packetBuffer[currentByteNumber];
+                  }
+                  
+                 if (optionValue==acceptedFormat.LINKFORMAT)
+                 {
+                  //zapamietanie
+
+
+                 }
+                 else 
+                 {
+                  //error nieobslugiwany format
+                 }
+                
+              }
+            
+            
+          
+        }
+
+   currentByteNumber+=optLen+1;
+       }
+
+}
+
+Serial.print("Ilosc opcji ");
+Serial.println(optionCounter);
+
+
+
 
 
 
@@ -140,6 +273,8 @@ Serial.println("Zły format nagłówka");
   {
 
     Serial.println("GET");
+    Serial.println("Przed");
+
 
     responseForGet(&cHeader);
     
@@ -150,16 +285,15 @@ Serial.println("Zły format nagłówka");
 void responseForGet(coapHeader *cHeader)
 {
  coapHeader responseHeader;
- 
+ coapHeader local = *cHeader;
     responseHeader.ver= 1;
     responseHeader.type=1;
     responseHeader.code=(byte)69; //2.0.5
     responseHeader.tokenLength=cHeader->tokenLength;
     responseHeader.token=cHeader->token;
-     Serial.println("CHEADER");
-          //Serial.println(cHeader.token);
-          Serial.println("ReSHEADER");
+    Serial.print("Token ");
     Serial.println(*responseHeader.token);
+ 
     responseHeader.messageID[0]=cHeader->messageID[0];
     responseHeader.messageID[1]=cHeader->messageID[1]+1;
 
@@ -177,7 +311,7 @@ void responseForPing(coapHeader cHeader)
     responseHeader.type=2;
     responseHeader.code=(byte)64;
     responseHeader.tokenLength=cHeader.tokenLength;
-    responseHeader.token=cHeader.token;
+   // responseHeader.token=cHeader.token;
     responseHeader.messageID[0]=cHeader.messageID[0];
     responseHeader.messageID[1]=cHeader.messageID[1];
 
@@ -239,7 +373,7 @@ void sendResponse(unsigned short value){
 
 */
 
-void sendResponse(coapHeader cHeader ){
+void sendResponse(coapHeader cHeader){
   udp.beginPacket(udp.remoteIP(), udp.remotePort());
 
   byte message[4+cHeader.tokenLength];
@@ -249,16 +383,18 @@ void sendResponse(coapHeader cHeader ){
   x=x<<4;
   x=x+cHeader.tokenLength;
 
+
   message[0]=x;
   message[1]=cHeader.code;
   message[2]=cHeader.messageID[0];
   message[3]=cHeader.messageID[1];
  for (int i=0; i<cHeader.tokenLength;i++)
  {
-  message[4+i]=*(cHeader.token+i);
+  message[4+i]=cHeader.token[i];
   Serial.println(message[4+i]);
  }
   int len = udp.write(message, sizeof (message));
+  
   udp.endPacket();
 }
 
