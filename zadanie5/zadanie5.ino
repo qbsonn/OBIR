@@ -38,9 +38,10 @@ struct coapHeader
 {
   byte ver;
   byte type;
-  byte token;
+  byte tokenLength;
   byte code;
   byte  messageID[2];
+  byte *token;
 };
 
   
@@ -99,26 +100,88 @@ void receivePacket(){
      coapHeader cHeader;
    
      cHeader.ver=packetBuffer[0]>>6;
-     cHeader.type=(packetBuffer[0]<<2)/64;
-     cHeader.type=(packetBuffer[0]<<4)/16;
+  
+     cHeader.type=byte(packetBuffer[0]<<2)/64;
+     cHeader.tokenLength=byte(packetBuffer[0]<<4)/16;
     
+      cHeader.code=packetBuffer[1];
      cHeader.messageID[0]=packetBuffer[2];
      cHeader.messageID[1]=packetBuffer[3];
+
+    if (cHeader.tokenLength>0)
+    {
+      byte tokentab[cHeader.tokenLength];
+      for (int i=0; i<cHeader.tokenLength; i++)
+      {
+        tokentab[i]=packetBuffer[4+i];
+        Serial.println(tokentab[i]);
+      }
+      
+      cHeader.token=tokentab;
+      Serial.println("CHEADER");
+          Serial.println(*cHeader.token);
+      
+    }
+  
+if( cHeader.ver!=1)
+  {
+Serial.println("Zły format nagłówka");
+  }
+
+
+
+  if (cHeader.type==0&&cHeader.code==0)
+  {//Ping
+    Serial.println("ping");
+    responseForPing(cHeader);
+  }
+
+  else if (cHeader.type==1&&cHeader.code==1)
+  {
+
+    Serial.println("GET");
+
+    responseForGet(&cHeader);
     
-   //  Serial.println( cHeader.messageID[0]);
-    // Serial.println( cHeader.messageID[1]);
+  }
+
+}
+
+void responseForGet(coapHeader *cHeader)
+{
+ coapHeader responseHeader;
  
-    coapHeader responseHeader;
+    responseHeader.ver= 1;
+    responseHeader.type=1;
+    responseHeader.code=(byte)69; //2.0.5
+    responseHeader.tokenLength=cHeader->tokenLength;
+    responseHeader.token=cHeader->token;
+     Serial.println("CHEADER");
+          //Serial.println(cHeader.token);
+          Serial.println("ReSHEADER");
+    Serial.println(*responseHeader.token);
+    responseHeader.messageID[0]=cHeader->messageID[0];
+    responseHeader.messageID[1]=cHeader->messageID[1]+1;
+
+    sendResponse(responseHeader);
+
+  
+}
+
+
+void responseForPing(coapHeader cHeader)
+{
+  coapHeader responseHeader;
  
     responseHeader.ver= 1;
     responseHeader.type=2;
     responseHeader.code=(byte)64;
+    responseHeader.tokenLength=cHeader.tokenLength;
     responseHeader.token=cHeader.token;
     responseHeader.messageID[0]=cHeader.messageID[0];
     responseHeader.messageID[1]=cHeader.messageID[1];
-    
-    sendResponse(responseHeader);
 
+    sendResponse(responseHeader);
 }
 
 
@@ -178,17 +241,23 @@ void sendResponse(unsigned short value){
 
 void sendResponse(coapHeader cHeader ){
   udp.beginPacket(udp.remoteIP(), udp.remotePort());
- 
-  byte message[4];
+
+  byte message[4+cHeader.tokenLength];
   byte x=1;
   x=x<<2;
   x=x+cHeader.type;
   x=x<<4;
-  x=x+cHeader.token;
+  x=x+cHeader.tokenLength;
+
   message[0]=x;
   message[1]=cHeader.code;
   message[2]=cHeader.messageID[0];
   message[3]=cHeader.messageID[1];
+ for (int i=0; i<cHeader.tokenLength;i++)
+ {
+  message[4+i]=*(cHeader.token+i);
+  Serial.println(message[4+i]);
+ }
   int len = udp.write(message, sizeof (message));
   udp.endPacket();
 }
