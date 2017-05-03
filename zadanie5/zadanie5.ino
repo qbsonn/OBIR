@@ -119,11 +119,12 @@ void loop() {
 */
 void receivePacket() {
 	// byte packetBuffer[MAX_BUFFER];
-	int len = udp.read(packetBuffer, MAX_BUFFER);
+	int packetLength = udp.read(packetBuffer, MAX_BUFFER);
 
-	Serial.println("message");
+	Serial.println();
+	Serial.println("[ODEBRANO PAKIET]");
 	Serial.print("Dlugosc pakietu[B]: ");
-	Serial.println(len);
+	Serial.println(packetLength);
 
 
 	CoapPackage cPackage;
@@ -146,11 +147,6 @@ void receivePacket() {
 	}
 	cPackage.token = tokenTab;
 	
-	//		Serial.print("Token: ");	Serial.println(*cPackage.token); // Printuje tylko pierwszy bajt tokena
-	//      Serial.print("Ver: "); Serial.println(cPackage.ver);
-	//      Serial.print("Type: "); Serial.println(cPackage.type);
-	//      Serial.print("TKL: "); Serial.println(cPackage.tokenLength);
-	//      Serial.print("Code: "); Serial.println(cPackage.code);
 
 	//int bytesLeft=len-4-cPackage.tokenLength;
 	
@@ -166,18 +162,15 @@ void receivePacket() {
 	
 	bool isNotPayloadByte = true;
 	
-	while((currentByteNumber < len) && isNotPayloadByte)
+	while((currentByteNumber < packetLength) && isNotPayloadByte)
 	{
 		Serial.println();
 		if (packetBuffer[currentByteNumber] == 255) // bajt samych jedynek rozpoczynający payload
 		{
 			isNotPayloadByte = false;
-			currentByteNumber++;
 		}
-		else {
-			
+		else {		
 			options = realloc(options, (optionCounter+1)*sizeof(Option));
-			// packetBuffer[currentByteNumber] to pierwszy bajt opcji (header)
 			optionHeader = packetBuffer[currentByteNumber++];
 			
 			byte optType = byte(optionHeader >> 4);
@@ -196,16 +189,11 @@ void receivePacket() {
 
 			if (optLen > 12) // Option length
 			{
-				//currentByteNumber += optLen - 12;
-				//int tempLen = 0;
-
-				if (optLen - 12 == 2) // Length extension 2 bytes
-				{
+				if (optLen - 12 == 2){ // Length extension 2 bytes
 					optLen += packetBuffer[currentByteNumber++];
 					optLen += packetBuffer[currentByteNumber++];
 				}
-				else // Length extension 1 byte
-				{
+				else{ // Length extension 1 byte
 					optLen += packetBuffer[currentByteNumber++];
 				}
 			}
@@ -216,14 +204,6 @@ void receivePacket() {
 			options[optionCounter].optionType = optType + prevOptionType;
 			options[optionCounter].optionLength = optLen;
 			options[optionCounter].optionValue = optValue;
-
-//			Serial.print("Dlugosc opcji: ");	Serial.println(optLen);
-//			Serial.print("Nr opcji: ");	Serial.println(optType);
-//			Serial.print("Option value: "); 
-//			for (int i=0; i<optLen; i++){
-//				Serial.print(optValue[0]); Serial.print(" ");
-//			}
-//			Serial.println();
 
 			/*if (optType == ACCEPT)
 			{
@@ -255,24 +235,17 @@ void receivePacket() {
 			optionCounter++;
 		}
 	}
-
-	cPackage.options = options;
-	// KONIEC WCZYTYWANIA OPCJI
-	for (int i=0; i< optionCounter; i++)
-	{
-		Serial.println();
-		Serial.print("opcja numer: "); Serial.println(i);
-		Serial.print("Dlugosc opcji: ");	Serial.println(cPackage.options[i].optionLength);
-		Serial.print("Nr opcji: ");	Serial.println(cPackage.options[i].optionType);
-		Serial.print("Option value: "); 
-		for (int j=0; j<cPackage.options[i].optionLength; j++){
-			Serial.print(*(cPackage.options[i].optionValue+j)); Serial.print(" ");
-		}
-		Serial.println();
-	}
 	
-	Serial.print("Ilosc opcji ");
-	Serial.println(optionCounter);
+	// KONIEC WCZYTYWANIA OPCJI
+	cPackage.optionsNumber = optionCounter;
+	cPackage.options = options;
+	
+
+	if (packetBuffer[currentByteNumber] == 255){ 	// Wczytywanie payloadu
+		
+	}
+
+	printCoapPackage(&cPackage);
 
 	if (cPackage.type == 0 && cPackage.code == 0) //Ping
 	{
@@ -382,6 +355,33 @@ unsigned short receivePotentiometrValueFromMini() {
   }
 
 */
+
+void printCoapPackage(CoapPackage *cPackage){
+	Serial.print("Ver:\t"); Serial.println(cPackage->ver);
+	Serial.print("Type:\t"); Serial.println(cPackage->type);
+	Serial.print("TKL:\t"); Serial.println(cPackage->tokenLength);
+	Serial.print("Code:\t"); Serial.println(cPackage->code);
+	Serial.print("Token:\t0x");
+	for (int i=0; i< cPackage->tokenLength; i++){
+		Serial.print(cPackage->token[i], HEX);
+	}
+	Serial.println();
+	Serial.print("Liczba opcji:\t");	Serial.println(cPackage->optionsNumber);
+	for (int i=0; i< cPackage->optionsNumber; i++)
+	{
+		Serial.print("Opcja nr: "); Serial.print(i);
+		Serial.print("\tDlugosc opcji: ");	Serial.print(cPackage->options[i].optionLength);
+		Serial.print("\tNr opcji: ");	Serial.print(cPackage->options[i].optionType);
+		Serial.print("\tOption value: "); 
+		for (int j=0; j<cPackage->options[i].optionLength; j++){
+			Serial.print(*(cPackage->options[i].optionValue+j)); Serial.print(" ");
+		}
+		Serial.println();
+	}
+	
+	
+
+}
 
 void sendResponse(CoapPackage *cPackage) {
 	udp.beginPacket(udp.remoteIP(), udp.remotePort());
