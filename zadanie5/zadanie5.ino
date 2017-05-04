@@ -36,8 +36,8 @@ unsigned short valueP;
 
 struct Option
 {
-	byte optionType;
-	byte optionLength;
+	uint16_t optionType;
+	uint16_t optionLength;
 	byte *optionValue;
 };
 
@@ -157,7 +157,7 @@ void receivePacket() {
 		}
 		else {
 //			cPacket.options = realloc(cPacket.options, (optionCounter+1)*sizeof(Option));
-	
+
 			optionHeader = packetBuffer[currentByteNumber++];
 
 			byte optType = byte(optionHeader >> 4);
@@ -187,7 +187,6 @@ void receivePacket() {
 
 			cPacket.options[optionCounter].optionType = optType + prevOptionType;
 			cPacket.options[optionCounter].optionLength = optLen;
-			Serial.println("pamiecia optValue");
 			cPacket.options[optionCounter].optionValue = (byte*) malloc(optLen * sizeof(byte*));
 			if (cPacket.options[optionCounter].optionValue == NULL)
 				Serial.println("lipa z pamiecia optValue");
@@ -204,30 +203,32 @@ void receivePacket() {
 	cPacket.optionsNumber = optionCounter;
 
 	// WCZYTYWANIE PAYLOADU
-	if (packetBuffer[currentByteNumber] == 255) {
+	if ((packetLength > currentByteNumber) && (packetBuffer[currentByteNumber] == 255)) {
 		currentByteNumber++;
 		cPacket.payloadLength = packetLength - currentByteNumber;
-		byte payload[cPacket.payloadLength];
-		memcpy(payload, packetBuffer+currentByteNumber, cPacket.payloadLength);
-		cPacket.payload = payload;
+//		byte payload[cPacket.payloadLength];
+//		memcpy(payload, packetBuffer+currentByteNumber, cPacket.payloadLength);
+//		cPacket.payload = payload;
+		cPacket.payload = (byte*) malloc(cPacket.payloadLength * sizeof(*cPacket.payload));
+		memcpy(cPacket.payload, packetBuffer+currentByteNumber, cPacket.payloadLength);
 	}
-	else{
+	else {
 		cPacket.payloadLength = 0;
 	}
 
 	printCoapPacket(&cPacket);
 	handlePacket(&cPacket);
 
-	Serial.println("Zwalnia pamiec");
 	// Zwolnienie pamieci po obsludze pakietu
-	if (cPacket.optionsNumber > 0){
-		for (int i=0; i<cPacket.optionsNumber; i++){
+	if (cPacket.optionsNumber > 0) {
+		for (int i=0; i<cPacket.optionsNumber; i++) {
 			if (cPacket.options[i].optionLength > 0)
 				free(cPacket.options[i].optionValue);
 		}
 		//free(cPacket.options);
 	}
-	Serial.println("Zwolnil pamiec");
+	if (cPacket.payloadLength >0)
+		free(cPacket.payload);
 }
 
 void handlePacket(CoapPacket *cPacket)
@@ -273,23 +274,56 @@ void handlePacket(CoapPacket *cPacket)
 
 void responseForGet(CoapPacket *cPacket)
 {
-	CoapResponse coapResponse;
+	CoapPacket responsePacket;
 
-	CoapPacket responseHeader;
-	CoapPacket local = *cPacket;
-	responseHeader.ver = 1;
-	responseHeader.type = 1;
-	responseHeader.code = (byte)69; //2.05
-	responseHeader.tokenLength = cPacket->tokenLength;
-	// responseHeader.token=cPacket->token;
-	responseHeader.token = cPacket->token;
-	Serial.print("Token ");
-	Serial.println(*responseHeader.token);
+	// HEADER
+	responsePacket.ver = 1;
+	responsePacket.type = 1;
+	responsePacket.code = (byte)69; //2.05
+	responsePacket.tokenLength = cPacket->tokenLength;
+	responsePacket.messageID[0] = cPacket->messageID[0];
+	responsePacket.messageID[1] = cPacket->messageID[1] + 1;
+	// TOKEN
+	responsePacket.token = cPacket->token;
+	
+	// OPTIONS
+	responsePacket.optionsNumber = 3;
+		Option options[responsePacket.optionsNumber];
+		
+		options[0].optionType = 13;
+		options[0].optionLength = 1;
+		options[0].optionValue = (byte*) malloc(options[0].optionLength * sizeof(byte*));
+		options[0].optionValue[0] = 1;
 
-	responseHeader.messageID[0] = cPacket->messageID[0];
-	responseHeader.messageID[1] = cPacket->messageID[1] + 1;
+		options[1].optionType = 17;
+		options[1].optionLength = 1;
+		options[1].optionValue = (byte*) malloc(options[1].optionLength * sizeof(byte*));
+		options[1].optionValue[0] = 23;
 
-	sendResponse(&responseHeader);
+		options[2].optionType = 60;
+		options[2].optionLength = 1;
+		options[2].optionValue = (byte*) malloc(options[2].optionLength * sizeof(byte*));
+		options[2].optionValue[0] = 33;
+		
+	responsePacket.options = options;
+	
+	// PAYLOAD
+	responsePacket.payloadLength = 10;
+	byte payload[10]; //= {97, 97, 97, 97, 97, 97, 97, 97, 97, 97};
+	for (byte i=0; i< 10; i++)
+		payload[i] = 97;
+	responsePacket.payload = payload;
+	
+
+
+	
+	sendResponse(&responsePacket);
+
+	// Zwolnienie pamieci z optionValue
+	for (byte i=0; i<responsePacket.optionsNumber; i++ ){
+		if (responsePacket.options[i].optionLength > 0)
+				free(responsePacket.options[i].optionValue);
+	}
 
 
 }
@@ -297,20 +331,20 @@ void responseForGet(CoapPacket *cPacket)
 
 void responseForPing(CoapPacket *cPacket)
 {
-	CoapPacket responseHeader;
+	CoapPacket responsePacket;
 
-	responseHeader.ver = 1;
-	responseHeader.type = 2;
-	responseHeader.code = (byte)64;
-	responseHeader.tokenLength = cPacket->tokenLength;
-	// responseHeader.token=cPacket.token;
-	responseHeader.messageID[0] = cPacket->messageID[0];
-	responseHeader.messageID[1] = cPacket->messageID[1];
+	responsePacket.ver = 1;
+	responsePacket.type = 2;
+	responsePacket.code = (byte)64;
+	responsePacket.tokenLength = cPacket->tokenLength;
+	// responsePacket.token=cPacket.token;
+	responsePacket.messageID[0] = cPacket->messageID[0];
+	responsePacket.messageID[1] = cPacket->messageID[1];
 
-	responseHeader.optionsNumber = 0;
-	responseHeader.payloadLength = 0;
+	responsePacket.optionsNumber = 0;
+	responsePacket.payloadLength = 0;
 
-	sendResponse(&responseHeader);
+	sendResponse(&responsePacket);
 }
 
 
@@ -382,7 +416,7 @@ void printCoapPacket(CoapPacket *cPacket) {
 	Serial.print("Token:\t");
 	if (cPacket->tokenLength == 0)
 		Serial.print("empty");
-	else{
+	else {
 		Serial.print("0x");
 		for (int i=0; i< cPacket->tokenLength; i++) {
 			Serial.print(cPacket->token[i], HEX);
@@ -402,7 +436,7 @@ void printCoapPacket(CoapPacket *cPacket) {
 		Serial.print("\tValue: ");
 		if (cPacket->options[i].optionLength == 0)
 			Serial.print("empty");
-		else	
+		else
 			for (int j=0; j<cPacket->options[i].optionLength; j++) {
 				Serial.print(*(cPacket->options[i].optionValue+j));
 				Serial.print(" ");
@@ -414,8 +448,8 @@ void printCoapPacket(CoapPacket *cPacket) {
 	Serial.print("Payload:\t");
 	if (cPacket->payloadLength == 0)
 		Serial.print("empty");
-		
-	else 
+
+	else
 		for (int i=0; i< cPacket->payloadLength; i++) {
 			Serial.print(cPacket->payload[i]);
 			Serial.print(" ");
@@ -429,25 +463,79 @@ void sendResponse(CoapPacket *cPacket) {
 	udp.beginPacket(udp.remoteIP(), udp.remotePort());
 
 	int packetSize = calculateCoapPacketSize(cPacket);
-	Serial.print("Packet size: "); Serial.println(packetSize);
-	byte message[4 + cPacket->tokenLength];
+	Serial.print("Packet size: ");
+	Serial.println(packetSize);
+	//byte message[4 + cPacket->tokenLength];
+	byte message[packetSize];
+	byte currentByteNumber = 4;
 	byte x = 1;
 	x = x << 2;
 	x = x + cPacket->type;
 	x = x << 4;
 	x = x + cPacket->tokenLength;
 
-
 	message[0] = x;
 	message[1] = cPacket->code;
 	message[2] = cPacket->messageID[0];
 	message[3] = cPacket->messageID[1];
-	Serial.print ("Token ");
+
+	//Token
 	for (int i = 0; i < cPacket->tokenLength; i++)
 	{
-		message[4 + i] = cPacket->token[i];
-		Serial.println(message[4 + i]);
+		message[currentByteNumber++] = cPacket->token[i];
 	}
+
+	//Options
+	if(cPacket->optionsNumber > 0)
+	{
+		uint16_t optionDelta = 0;
+		for (int i=0; i<cPacket->optionsNumber; i++) {
+
+			byte optionHeaderByteNumber = currentByteNumber++;
+			byte optionHeader = 0;
+			uint16_t optionTypeMinusDelta = cPacket->options[i].optionType - optionDelta;
+			optionDelta = cPacket->options[i].optionType;
+
+			if (optionTypeMinusDelta >= 269){ // 2 bytes extension type
+				optionHeader = 14;
+				message[currentByteNumber++] = byte((optionTypeMinusDelta - 14) >> 8);
+				message[currentByteNumber++] = byte(optionTypeMinusDelta - 14);
+			}
+			else if (optionTypeMinusDelta >= 13){ // 1 byte extension type
+				optionHeader = 13;
+				message[currentByteNumber++] = byte(optionTypeMinusDelta - 13);
+			}
+			else { // no extension type
+				optionHeader = optionTypeMinusDelta;
+			}
+			optionHeader = optionHeader << 4;
+			 
+			if (cPacket->options[i].optionLength >= 269){ // 2 bytes extension length
+				optionHeader += 14;
+				message[currentByteNumber++] = byte((cPacket->options[i].optionLength - 14) >> 8);
+				message[currentByteNumber++] = byte(cPacket->options[i].optionLength - 14);
+			}
+			else if (cPacket->options[i].optionLength >= 13){ // 1 byte extension length
+				optionHeader += 13;
+				message[currentByteNumber++] = byte(cPacket->options[i].optionLength - 13);
+			}
+			else { // no extension type
+				optionHeader += cPacket->options[i].optionLength;
+			}
+	
+			message[optionHeaderByteNumber] = optionHeader;
+	
+			memcpy(message+currentByteNumber, cPacket->options[i].optionValue, cPacket->options[i].optionLength);
+			currentByteNumber += cPacket->options[i].optionLength;
+		}
+	}
+
+	// Payload
+	if (cPacket->payloadLength > 0){
+		message[currentByteNumber++] = 255; // bajt jedynek
+		memcpy(message+currentByteNumber, cPacket->payload, cPacket->payloadLength);
+	}
+
 	int len = udp.write(message, sizeof (message));
 
 	udp.endPacket();
@@ -456,26 +544,32 @@ void sendResponse(CoapPacket *cPacket) {
 int calculateCoapPacketSize(CoapPacket *cPacket) {
 	int size = 4; // naglowek
 	size += cPacket->tokenLength;
-	for (int i=0; i<cPacket->optionsNumber; i++){
+
+	uint16_t optionDelta = 0;
+	for (int i=0; i<cPacket->optionsNumber; i++) {
 		size++; // OptionType, OptionLength bez extension
+
+		uint16_t optionTypeMinusDelta = cPacket->options[i].optionType - optionDelta;
+		optionDelta = cPacket->options[i].optionType;
 		
-		if (cPacket->options[i].optionType > 269) // 2 bytes extension type
+		if (optionTypeMinusDelta >= 269) // 2 bytes extension type
 			size += 2;
-		else if (cPacket->options[i].optionType > 13) // 1 byte extension type
+		else if (optionTypeMinusDelta >= 13) // 1 byte extension type
 			size++;
-			
-		if (cPacket->options[i].optionLength > 269) // 2 bytes extension length
+
+		if (cPacket->options[i].optionLength >= 269) // 2 bytes extension length
 			size += 2;
-		else if (cPacket->options[i].optionLength > 13) // 1 byte extension length
+		else if (cPacket->options[i].optionLength >= 13) // 1 byte extension length
 			size++;
-			
+
 		size += cPacket->options[i].optionLength;
 	}
-	if (cPacket->payloadLength > 0){ // jeśli tak to payload istnieje
+
+	if (cPacket->payloadLength > 0) { // jeśli tak to payload istnieje
 		size++; // bajt samych jedynek
 		size += cPacket->payloadLength;
 	}
-
+	
 	return size;
 }
 
