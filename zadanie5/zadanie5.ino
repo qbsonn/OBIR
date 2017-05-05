@@ -42,11 +42,6 @@ struct Option
 	byte *optionValue;
 };
 
-enum uriPaths
-{
-	WELL_KNOWN_CORE = 1, POTENTIOMETR = 2, LAMP = 3
-};
-
 struct CoapPacket
 {
 	byte ver;
@@ -61,21 +56,35 @@ struct CoapPacket
 	byte *payload;
 };
 
-struct CoapResponse
+enum messageTypes
 {
-	byte optLen;
-	byte optTyp;
-	byte *optValue;
+	CON = 0, NON = 1, ACK = 2, RST = 3
 };
 
-enum acceptedFormat
+enum uriPaths
 {
-	PLAIN = 0, LINKFORMAT = 40
+	WELL_KNOWN_CORE = 1, POTENTIOMETR = 2, LAMP = 3
+};
+
+enum acceptedFormats
+{
+	PLAIN = 0, LINK_FORMAT = 40
 };
 
 enum optionTypes
 {
 	URI_PATH = 11, CONTENT_FORMAT = 12, ACCEPT = 17
+};
+
+enum messageCodes
+{
+	EMPTY_MESSAGE,				//0.00
+	GET = 1,					//0.01
+	PUT = 3,					//0.03
+	CREATED = 65,				//2.01
+	CONTENT = 69,				//2.05
+	NOT_FOUND = 132,			//4.04
+	INTERNAL_SERVER_ERROR = 143	//5.00
 };
 
 bool areStringsEqual(const char *c1, const char *c2, byte c1Size, byte c2Size)
@@ -209,9 +218,6 @@ void receivePacket() {
 	if ((packetLength > currentByteNumber) && (packetBuffer[currentByteNumber] == 255)) {
 		currentByteNumber++;
 		cPacket.payloadLength = packetLength - currentByteNumber;
-//		byte payload[cPacket.payloadLength];
-//		memcpy(payload, packetBuffer+currentByteNumber, cPacket.payloadLength);
-//		cPacket.payload = payload;
 		cPacket.payload = (byte*) malloc(cPacket.payloadLength * sizeof(*cPacket.payload));
 		memcpy(cPacket.payload, packetBuffer+currentByteNumber, cPacket.payloadLength);
 	}
@@ -236,12 +242,12 @@ void receivePacket() {
 
 void handlePacket(CoapPacket *cPacket)
 {
-	if (cPacket->type == 0 && cPacket->code == 0) //Ping
+	if (cPacket->type == CON && cPacket->code == EMPTY_MESSAGE) //Ping
 	{
 		Serial.println("ping");
 		responseForPing(cPacket);
 	}
-	else if (cPacket->type == 1 && cPacket->code == 1) 	// GET
+	else if (cPacket->type == NON && cPacket->code ==	GET) 	// GET
 	{
 		Serial.println("GET");
 		responseForGet(cPacket);
@@ -289,7 +295,7 @@ void responseForGet(CoapPacket *cPacket)
 
 	// HEADER
 	responsePacket.ver = 1;
-	responsePacket.type = 1;
+	responsePacket.type = NON;
 	responsePacket.tokenLength = cPacket->tokenLength;
 	responsePacket.messageID[0] = cPacket->messageID[0];
 	responsePacket.messageID[1] = cPacket->messageID[1] + 1;
@@ -302,17 +308,17 @@ void responseForGet(CoapPacket *cPacket)
 
 	if (! errorFormatFlag)
 	{
-		responsePacket.code = (byte)69; //2.05
+		responsePacket.code = CONTENT; //2.05
 
 		if (uriPathType == WELL_KNOWN_CORE) 
 		{
 			responsePacket.optionsNumber =1;
 			Option options[responsePacket.optionsNumber];
 
-			options[0].optionType = 12;
+			options[0].optionType = CONTENT_FORMAT;
 			options[0].optionLength = 1;
 			options[0].optionValue = (byte*) malloc(options[0].optionLength * sizeof(byte*));
-			options[0].optionValue[0] = 40; //core link format
+			options[0].optionValue[0] = LINK_FORMAT; //core link format
 
 			responsePacket.options = options;
 
@@ -334,7 +340,7 @@ void responseForGet(CoapPacket *cPacket)
 			Option options[responsePacket.optionsNumber];
 
 			responsePacket.optionsNumber =1;
-			options[0].optionType = 12;
+			options[0].optionType = CONTENT_FORMAT;
 			options[0].optionLength = 0;
 
 			responsePacket.options = options;
@@ -363,7 +369,7 @@ void responseForGet(CoapPacket *cPacket)
 			responsePacket.payload = payload;
 		}
 		else {
-			responsePacket.code = (byte)132; //4.04
+			responsePacket.code = NOT_FOUND; //4.04
 			responsePacket.payloadLength = 14;
 			char diagnosticPayload[responsePacket.payloadLength] = "Wrong URI-PATH";
 
@@ -372,7 +378,7 @@ void responseForGet(CoapPacket *cPacket)
 	}
 	else
 	{
-		responsePacket.code = (byte)143; //4.15
+		responsePacket.code = INTERNAL_SERVER_ERROR; //4.15
 		responsePacket.payloadLength = 22;
 		char diagnosticPayload[responsePacket.payloadLength] = "Accepted format: plain";
 
@@ -394,7 +400,7 @@ void responseForPing(CoapPacket *cPacket)
 	CoapPacket responsePacket;
 
 	responsePacket.ver = 1;
-	responsePacket.type = 2;
+	responsePacket.type = ACK;
 	responsePacket.code = (byte)64;
 	responsePacket.tokenLength = cPacket->tokenLength;
 	// responsePacket.token=cPacket.token;
@@ -523,8 +529,8 @@ void sendResponse(CoapPacket *cPacket) {
 	udp.beginPacket(udp.remoteIP(), udp.remotePort());
 
 	int packetSize = calculateCoapPacketSize(cPacket);
-	Serial.print("Packet size: ");
-	Serial.println(packetSize);
+//	Serial.print("Packet size: ");
+//	Serial.println(packetSize);
 	//byte message[4 + cPacket->tokenLength];
 	byte message[packetSize];
 	byte currentByteNumber = 4;
