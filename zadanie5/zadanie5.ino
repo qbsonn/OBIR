@@ -12,8 +12,8 @@ byte mac[] = {
 
 EthernetUDP udp;
 
-const int MAX_BUFFER = 255;
-int currentValue = 255;
+const byte MAX_BUFFER = 255;
+byte currentValue = 255;
 
 short localPort = 1244;
 
@@ -29,7 +29,7 @@ struct payload_t {                 // Structure of our payload
 	unsigned long ms;
 	unsigned short value;
 };
-IPAddress ip(192, 168, 2, 140);
+
 
 byte packetBuffer[MAX_BUFFER];
 
@@ -103,6 +103,7 @@ bool areStringsEqual(const char *c1, const char *c2, byte c1Size, byte c2Size)
 
 
 void setup() {
+  IPAddress ip(192, 168, 2, 140);
 	Serial.begin(115200);
 	Ethernet.begin(mac, ip);
 	Serial.println(Ethernet.localIP());
@@ -296,7 +297,7 @@ void responseForPut(CoapPacket *cPacket){
 
 void responseForGet(CoapPacket *cPacket)
 {
-// sendGetPotentiometrValueMessage();
+
 	bool errorFormatFlag = false;
 	byte uriPathType = 0;
 
@@ -375,7 +376,8 @@ void responseForGet(CoapPacket *cPacket)
 		}
 		else if (uriPathType == POTENTIOMETR) {
 
-			uint16_t receiveValue=888;//receivePotentiometrValueFromMini();
+    sendGetPotentiometrValueMessage();
+			uint16_t receiveValue=receivePotentiometrValueFromMini();
 			Serial.print ("Odebrane: ");
 			Serial.println(receiveValue);
 
@@ -399,7 +401,7 @@ void responseForGet(CoapPacket *cPacket)
 			else
 				responsePacket.payloadLength = 1;
 
-			byte payload[responsePacket.payloadLength];
+			byte* payload = (byte*) malloc(responsePacket.payloadLength * sizeof(byte));
 			uint16_t prevValue = 0;
 			for (byte i=0; i<responsePacket.payloadLength; i++ ) {
 				payload[i] = receiveValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
@@ -459,7 +461,7 @@ void responseForGet(CoapPacket *cPacket)
 
 		responsePacket.payload = diagnosticPayload;
 	}
-
+printCoapPacket(&responsePacket);
 	sendResponse(&responsePacket);
 
 	// Zwolnienie pamieci z optionValue
@@ -512,16 +514,20 @@ bool sendGetPotentiometrValueMessage() {
 }
 
 unsigned short receivePotentiometrValueFromMini() {
-	if ( network.available() )
+	while(true)
 	{
+	  network.update();
 
-		RF24NetworkHeader header;
-		payload_t payload;
-		network.read(header, &payload, sizeof(payload));
-		Serial.print("hahah ");
-		Serial.println(payload.value);
-		return payload.value;
+    if (network.available()){
+  		RF24NetworkHeader header;
+  		payload_t payload;
+  		network.read(header, &payload, sizeof(payload));
+  		Serial.print("hahah ");
+  		Serial.println(payload.value);
+  		return payload.value;
+		}
 	}
+ return 2000;
 }
 /*
   void sendResponse(unsigned short value){
