@@ -2,7 +2,7 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <stdlib.h>
-
+#include <string.h>
 #include <RF24Network.h>
 #include <RF24.h>
 #include <SPI.h>
@@ -41,6 +41,11 @@ struct Option
 	byte *optionValue;
 };
 
+enum uriPaths
+{
+  WELL_KNOWN_CORE = 1, POTENTIOMETR = 2, LAMP = 3
+};
+
 struct CoapPacket
 {
 	byte ver;
@@ -72,6 +77,17 @@ enum optionTypes
 	URI_PATH = 11, CONTENT_FORMAT = 12, ACCEPT = 17
 };
 
+int are_equal(const char *c1, const char *c2, byte c1Size, byte c2Size)
+{
+    if (c1Size !=c2Size)
+        return 1; // They must be different
+    for (int i = 0; i < c1Size; i++)
+    {
+        if (c1[i] != c2[i])
+            return 1;  // They are different
+    }
+    return 0;  // They must be the same
+}
 
 byte packetBuffer[MAX_BUFFER];
 
@@ -216,7 +232,7 @@ void receivePacket() {
 		cPacket.payloadLength = 0;
 	}
 
-	printCoapPacket(&cPacket);
+	//printCoapPacket(&cPacket);
 	handlePacket(&cPacket);
 
 	// Zwolnienie pamieci po obsludze pakietu
@@ -258,7 +274,7 @@ void handlePacket(CoapPacket *cPacket)
 					}
 				}
 			}*/
-
+     
 	if (cPacket->type == 0 && cPacket->code == 0) //Ping
 	{
 		Serial.println("ping");
@@ -274,58 +290,163 @@ void handlePacket(CoapPacket *cPacket)
 
 void responseForGet(CoapPacket *cPacket)
 {
+
+Serial.println(are_equal("well","ore",sizeof("well"),sizeof("ore")));
+//Serial.println(are_equal("well","welll"));
+Serial.println(are_equal("well","weuy",sizeof("well"),sizeof("weyu")));
+Serial.println(are_equal("well","well",sizeof("well"),sizeof("well")));
+ // sendGetPotentiometrValueMessage();
+  bool errorFormatFlag=false;
+  byte uriPathType = 0;
+  
 	CoapPacket responsePacket;
+  responsePacket.optionsNumber = 0;
+  responsePacket.payloadLength = 0;
 
-	// HEADER
-	responsePacket.ver = 1;
-	responsePacket.type = 1;
-	responsePacket.code = (byte)69; //2.05
-	responsePacket.tokenLength = cPacket->tokenLength;
-	responsePacket.messageID[0] = cPacket->messageID[0];
-	responsePacket.messageID[1] = cPacket->messageID[1] + 1;
-	// TOKEN
-	responsePacket.token = cPacket->token;
+  for(byte i=0; i< cPacket->optionsNumber; i++){
+          char ddd[5] = "well";
+
+         
+          
+          
+
+    switch(cPacket->options[i].optionType)
+    {
+      case URI_PATH: Serial.println("URI");
+        if (are_equal(cPacket->options[i].optionValue, ".well-known",cPacket->options[i].optionLength, 11 ) == 0){
+          //Serial.println("WSZEDL WELL");
+          if ((are_equal(cPacket->options[i+1].optionValue, "core",cPacket->options[i+1].optionLength, 4) == 0)){
+            uriPathType = WELL_KNOWN_CORE;
+            //Serial.println("WSZEDL WELL1");
+          }
+          
+        }
+        else if (are_equal(cPacket->options[i].optionValue, "potentiometr",cPacket->options[i].optionLength, 12 ) == 0){
+          Serial.println("potentio");
+          uriPathType = POTENTIOMETR;
+        }
+        
+        //Serial.println (strcmp(cPacket->options[i].optionValue, ".well-known"));
+        
+        //Serial.println((char)cPacket->options[i].optionValue);
+        
+        break;
+
+      case CONTENT_FORMAT:Serial.println("FORMAT");
+      break;
+
+      case ACCEPT:
+      Serial.println("ACCEPT");
+      if (cPacket->options[i].optionValue[0] != PLAIN)
+     {
+        Serial.println("Zły format");
+        errorFormatFlag=true;
+      }
+      break;
+    }
+  }
+  
+    // HEADER
+  responsePacket.ver = 1;
+  responsePacket.type = 1;
+  responsePacket.tokenLength = cPacket->tokenLength;
+  responsePacket.messageID[0] = cPacket->messageID[0];
+  responsePacket.messageID[1] = cPacket->messageID[1] + 1;
+  // TOKEN
+  responsePacket.token = cPacket->token;
+
+  Serial.print("Token: "); Serial.println(cPacket->token[0]);
+
+  
+  if (! errorFormatFlag)
+  {
 	
-	// OPTIONS
-	responsePacket.optionsNumber = 3;
-		Option options[responsePacket.optionsNumber];
-		
-		options[0].optionType = 13;
-		options[0].optionLength = 1;
-		options[0].optionValue = (byte*) malloc(options[0].optionLength * sizeof(byte*));
-		options[0].optionValue[0] = 1;
+  	responsePacket.code = (byte)69; //2.05
 
-		options[1].optionType = 17;
-		options[1].optionLength = 1;
-		options[1].optionValue = (byte*) malloc(options[1].optionLength * sizeof(byte*));
-		options[1].optionValue[0] = 23;
+    if (uriPathType == WELL_KNOWN_CORE){
+      Serial.println ("WELL KNOWN");
+      responsePacket.optionsNumber =1;
+      Option options[responsePacket.optionsNumber];
 
-		options[2].optionType = 60;
-		options[2].optionLength = 1;
-		options[2].optionValue = (byte*) malloc(options[2].optionLength * sizeof(byte*));
-		options[2].optionValue[0] = 33;
-		
-	responsePacket.options = options;
-	
-	// PAYLOAD
-	responsePacket.payloadLength = 10;
-	byte payload[10]; //= {97, 97, 97, 97, 97, 97, 97, 97, 97, 97};
-	for (byte i=0; i< 10; i++)
-		payload[i] = 97;
-	responsePacket.payload = payload;
-	
+      options[0].optionType = 12;
+      options[0].optionLength = 1;
+      options[0].optionValue = (byte*) malloc(options[0].optionLength * sizeof(byte*));
+      options[0].optionValue[0] = 40; //core link format 
 
+      responsePacket.options = options;
 
-	
-	sendResponse(&responsePacket);
+      responsePacket.payloadLength = 86;
+      char payload[] = "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
+      
+      Serial.print("payload length: ");Serial.println(sizeof(payload)/sizeof(char));
 
-	// Zwolnienie pamieci z optionValue
-	for (byte i=0; i<responsePacket.optionsNumber; i++ ){
-		if (responsePacket.options[i].optionLength > 0)
-				free(responsePacket.options[i].optionValue);
-	}
+      responsePacket.payload =payload;
+    }
+    else if (uriPathType == POTENTIOMETR){
+      
+      uint16_t receiveValue=888;//receivePotentiometrValueFromMini();
+      Serial.print ("Odebrane: ");
+      Serial.println(receiveValue);
+      
+      responsePacket.optionsNumber =1;
+      Option options[responsePacket.optionsNumber];
+  
+        responsePacket.optionsNumber =1;
+        options[0].optionType = 12;
+        options[0].optionLength = 0;
+  
+        responsePacket.options = options;
+  //      options[0].optionValue = (byte*) malloc(options[0].optionLength * sizeof(byte*));
+  //      options[0].optionValue[0] = 1;
+  
+    
+      if (receiveValue >= 1000)
+        responsePacket.payloadLength = 4;
+      else if (receiveValue >= 100)
+        responsePacket.payloadLength = 3;
+       else if (receiveValue >= 10)
+        responsePacket.payloadLength = 2;
+         else
+        responsePacket.payloadLength = 1;
+    
+        byte payload[responsePacket.payloadLength];
+        uint16_t prevValue = 0;
+        for (byte i=0; i<responsePacket.payloadLength; i++ ){
+          payload[i] = receiveValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
+          prevValue = (prevValue + payload[i]) * 10;
+          payload[i] += '0';
+          Serial.print("payload : "); Serial.println(payload[i]);
+        }
+    
+      responsePacket.payload = payload;
+    }
+    else{
+      responsePacket.code = (byte)132; //4.04 
+    responsePacket.payloadLength = 14;
+    char diagnosticPayload[responsePacket.payloadLength] = "Wrong URI-PATH";
 
+    responsePacket.payload = diagnosticPayload;
+   
+    }
+  	
+ 	} 
+  else
+  {
+    responsePacket.code = (byte)143; //4.15  
+    responsePacket.payloadLength = 22;
+    char diagnosticPayload[responsePacket.payloadLength] = "Accepted format: plain";
 
+    responsePacket.payload = diagnosticPayload;
+        
+  }
+
+  sendResponse(&responsePacket);
+
+  // Zwolnienie pamieci z optionValue
+  for (byte i=0; i<responsePacket.optionsNumber; i++ ){
+    if (responsePacket.options[i].optionLength > 0)
+        free(responsePacket.options[i].optionValue);
+  }
 }
 
 
