@@ -34,6 +34,7 @@ IPAddress ip(192, 168, 2, 140);
 byte packetBuffer[MAX_BUFFER];
 
 unsigned short valueP;
+unsigned short lampValue = 0;
 
 struct Option
 {
@@ -252,6 +253,45 @@ void handlePacket(CoapPacket *cPacket)
 		Serial.println("GET");
 		responseForGet(cPacket);
 	}
+	else if (cPacket->type == NON && cPacket->code ==	PUT){
+		Serial.println("PUT");
+		responseForPut(cPacket);
+	}
+}
+
+void responseForPut(CoapPacket *cPacket){
+	byte uriPathType = 0;
+	for(byte i=0; i< cPacket->optionsNumber; i++) 
+	{
+		switch(cPacket->options[i].optionType)
+		{
+			case URI_PATH:
+				if (areStringsEqual(cPacket->options[i].optionValue, "lamp",cPacket->options[i].optionLength, 4 )) {
+					uriPathType = LAMP;
+				}
+				break;
+		}
+	}
+
+	if (uriPathType == LAMP){
+		unsigned short lampNewValue = 0;
+		bool wrongTypePayloadErrorFlag = false;
+		for (byte i=0; i< cPacket->payloadLength; i++){
+			byte digit = cPacket->payload[i] - '0';
+			if (digit < 0 || digit > 9){
+				wrongTypePayloadErrorFlag = true;
+				break; // wychodzi z fora
+			}
+			lampNewValue = lampNewValue * 10 + digit;
+		}
+		
+		if (wrongTypePayloadErrorFlag)
+			Serial.println("Zly format payloadu");
+		else{
+			lampValue = lampNewValue;
+			Serial.print("nowa lampa: "); Serial.println(lampNewValue);
+		}
+	}
 }
 
 void responseForGet(CoapPacket *cPacket)
@@ -268,28 +308,31 @@ void responseForGet(CoapPacket *cPacket)
 	{
 		switch(cPacket->options[i].optionType)
 		{
-		case URI_PATH:
-			if (areStringsEqual(cPacket->options[i].optionValue, ".well-known",cPacket->options[i].optionLength, 11 )) {
-				if ((areStringsEqual(cPacket->options[i+1].optionValue, "core",cPacket->options[i+1].optionLength, 4))) {
-					uriPathType = WELL_KNOWN_CORE;
+			case URI_PATH:
+				if (areStringsEqual(cPacket->options[i].optionValue, ".well-known",cPacket->options[i].optionLength, 11 )) {
+					if ((areStringsEqual(cPacket->options[i+1].optionValue, "core",cPacket->options[i+1].optionLength, 4))) {
+						uriPathType = WELL_KNOWN_CORE;
+					}
 				}
-			}
-			else if (areStringsEqual(cPacket->options[i].optionValue, "potentiometr",cPacket->options[i].optionLength, 12 )) {
-				uriPathType = POTENTIOMETR;
-			}
-			break;
-
-		// Czy to wgl bedzie???????????????????????????????????????????????
-		case CONTENT_FORMAT:
-			break;
-
-		case ACCEPT:
-			if (cPacket->options[i].optionValue[0] != PLAIN)
-			{
-				Serial.println("Zły format");
-				errorFormatFlag = true;
-			}
-			break;
+				else if (areStringsEqual(cPacket->options[i].optionValue, "potentiometr",cPacket->options[i].optionLength, 12 )) {
+					uriPathType = POTENTIOMETR;
+				}
+				else if (areStringsEqual(cPacket->options[i].optionValue, "lamp",cPacket->options[i].optionLength, 4 )) {
+					uriPathType = LAMP;
+				}
+				break;
+	
+			// Czy to wgl bedzie???????????????????????????????????????????????
+			case CONTENT_FORMAT:
+				break;
+	
+			case ACCEPT:
+				if (cPacket->options[i].optionValue[0] != PLAIN)
+				{
+					Serial.println("Zły format");
+					errorFormatFlag = true;
+				}
+				break;
 		}
 	}
 
@@ -368,6 +411,38 @@ void responseForGet(CoapPacket *cPacket)
 
 			responsePacket.payload = payload;
 		}
+		else if (uriPathType == LAMP) 
+		{
+			responsePacket.optionsNumber =1;
+			Option options[responsePacket.optionsNumber];
+
+			responsePacket.optionsNumber =1;
+			options[0].optionType = CONTENT_FORMAT;
+			options[0].optionLength = 0;
+
+			responsePacket.options = options;
+
+			if (lampValue >= 1000)
+				responsePacket.payloadLength = 4;
+			else if (lampValue >= 100)
+				responsePacket.payloadLength = 3;
+			else if (lampValue >= 10)
+				responsePacket.payloadLength = 2;
+			else
+				responsePacket.payloadLength = 1;
+
+			byte payload[responsePacket.payloadLength];
+			uint16_t prevValue = 0;
+			for (byte i=0; i<responsePacket.payloadLength; i++ ) {
+				payload[i] = lampValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
+				prevValue = (prevValue + payload[i]) * 10;
+				payload[i] += '0';
+				Serial.print("payload : ");
+				Serial.println(payload[i]);
+			}
+
+			responsePacket.payload = payload;
+		}
 		else {
 			responsePacket.code = NOT_FOUND; //4.04
 			responsePacket.payloadLength = 14;
@@ -393,7 +468,6 @@ void responseForGet(CoapPacket *cPacket)
 			free(responsePacket.options[i].optionValue);
 	}
 }
-
 
 void responseForPing(CoapPacket *cPacket)
 {
