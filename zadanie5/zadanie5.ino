@@ -129,11 +129,6 @@ void receivePacket() {
 	// byte packetBuffer[MAX_BUFFER];
 	int packetLength = udp.read(packetBuffer, MAX_BUFFER);
 
-	Serial.println();
-	Serial.println("[ODEBRANO PAKIET]");
-	Serial.print("Dlugosc pakietu[B]: ");
-	Serial.println(packetLength);
-
 	CoapPacket cPacket;
 
 	cPacket.ver = packetBuffer[0] >> 6; // Bity numer 0, 1
@@ -143,10 +138,6 @@ void receivePacket() {
 	cPacket.messageID[0] = packetBuffer[2];
 	cPacket.messageID[1] = packetBuffer[3];
 
-	if ( cPacket.ver != 1) {
-		Serial.println("Zły format nagłówka");
-		return;
-	}
 
 	byte tokenTab[cPacket.tokenLength];
 	for (int i = 0; i < cPacket.tokenLength; i++) {
@@ -201,10 +192,20 @@ void receivePacket() {
 
 			cPacket.options[optionCounter].optionType = optType + prevOptionType;
 			cPacket.options[optionCounter].optionLength = optLen;
-			cPacket.options[optionCounter].optionValue = (byte*) malloc(optLen * sizeof(byte*));
-			if (cPacket.options[optionCounter].optionValue == NULL)
+			//cPacket.options[optionCounter].optionValue = (byte*) malloc(optLen * sizeof(byte*));
+      
+      if (optLen >0){
+        cPacket.options[optionCounter].optionValue = new byte[optLen];
+        memcpy(cPacket.options[optionCounter].optionValue, packetBuffer+currentByteNumber, optLen);
+      }
+      else {
+        cPacket.options[optionCounter].optionValue = new byte[1];
+        cPacket.options[optionCounter].optionLength = 1;
+        cPacket.options[optionCounter].optionValue[0] = 0;
+      }
+			if (cPacket.options[optionCounter].optionValue == NULL && optLen >0)
 				Serial.println("lipa z pamiecia optValue");
-			memcpy(cPacket.options[optionCounter].optionValue, packetBuffer+currentByteNumber, optLen);
+			
 
 
 			prevOptionType += optType;
@@ -220,7 +221,8 @@ void receivePacket() {
 	if ((packetLength > currentByteNumber) && (packetBuffer[currentByteNumber] == 255)) {
 		currentByteNumber++;
 		cPacket.payloadLength = packetLength - currentByteNumber;
-		cPacket.payload = (byte*) malloc(cPacket.payloadLength * sizeof(*cPacket.payload));
+		//cPacket.payload = (byte*) malloc(cPacket.payloadLength * sizeof(*cPacket.payload));
+		cPacket.payload = new byte[cPacket.payloadLength];
 		memcpy(cPacket.payload, packetBuffer+currentByteNumber, cPacket.payloadLength);
 	}
 	else {
@@ -234,28 +236,30 @@ void receivePacket() {
 	if (cPacket.optionsNumber > 0) {
 		for (int i=0; i<cPacket.optionsNumber; i++) {
 			if (cPacket.options[i].optionLength > 0)
-				free(cPacket.options[i].optionValue);
+				{//free(cPacket.options[i].optionValue);
+       delete [] cPacket.options[i].optionValue;
+				}
 		}
 		//free(cPacket.options);
 	}
-	if (cPacket.payloadLength >0)
-		free(cPacket.payload);
+	if (cPacket.payloadLength >0){
+		//free(cPacket.payload);
+     
+    delete [] cPacket.payload;
+     }
 }
 
 void handlePacket(CoapPacket *cPacket)
 {
 	if (cPacket->type == CON && cPacket->code == EMPTY_MESSAGE) //Ping
 	{
-		Serial.println("ping");
 		responseForPing(cPacket);
 	}
 	else if (cPacket->type == NON && cPacket->code ==	GET) 	// GET
 	{
-		Serial.println("GET");
 		responseForGet(cPacket);
 	}
 	else if (cPacket->type == NON && cPacket->code ==	PUT){
-		Serial.println("PUT");
 		responseForPut(cPacket);
 	}
 }
@@ -264,14 +268,11 @@ void responseForPut(CoapPacket *cPacket){
 	byte uriPathType = 0;
 	for(byte i=0; i< cPacket->optionsNumber; i++) 
 	{
-		switch(cPacket->options[i].optionType)
-		{
-			case URI_PATH:
+		
+			if (cPacket->options[i].optionType==URI_PATH)
 				if (areStringsEqual(cPacket->options[i].optionValue, "lamp",cPacket->options[i].optionLength, 4 )) {
 					uriPathType = LAMP;
 				}
-				break;
-		}
 	}
 
 	if (uriPathType == LAMP){
@@ -287,10 +288,10 @@ void responseForPut(CoapPacket *cPacket){
 		}
 		
 		if (wrongTypePayloadErrorFlag)
-			Serial.println("Zly format payloadu");
+			Serial.println("Zly payload");
 		else{
 			lampValue = lampNewValue;
-			Serial.print("nowa lampa: "); Serial.println(lampNewValue);
+			Serial.print("lamp: "); Serial.println(lampNewValue);
 		}
 	}
 }
@@ -307,9 +308,10 @@ void responseForGet(CoapPacket *cPacket)
 
 	for(byte i=0; i< cPacket->optionsNumber; i++) 
 	{
-		switch(cPacket->options[i].optionType)
-		{
-			case URI_PATH:
+	
+    if (cPacket->options[i].optionType==URI_PATH)
+    {
+			
 				if (areStringsEqual(cPacket->options[i].optionValue, ".well-known",cPacket->options[i].optionLength, 11 )) {
 					if ((areStringsEqual(cPacket->options[i+1].optionValue, "core",cPacket->options[i+1].optionLength, 4))) {
 						uriPathType = WELL_KNOWN_CORE;
@@ -321,20 +323,22 @@ void responseForGet(CoapPacket *cPacket)
 				else if (areStringsEqual(cPacket->options[i].optionValue, "lamp",cPacket->options[i].optionLength, 4 )) {
 					uriPathType = LAMP;
 				}
-				break;
-	
+				
+    }
+    else 
+    if (cPacket->options[i].optionType==CONTENT_FORMAT)
+    {
 			// Czy to wgl bedzie???????????????????????????????????????????????
-			case CONTENT_FORMAT:
-				break;
-	
-			case ACCEPT:
+			
+    }
+    else if (cPacket->options[i].optionType==ACCEPT)
+    {
 				if (cPacket->options[i].optionValue[0] != PLAIN)
 				{
-					Serial.println("Zły format");
 					errorFormatFlag = true;
 				}
-				break;
-		}
+				
+    }
 	}
 
 	// HEADER
@@ -345,10 +349,6 @@ void responseForGet(CoapPacket *cPacket)
 	responsePacket.messageID[1] = cPacket->messageID[1] + 1;
 	// TOKEN
 	responsePacket.token = cPacket->token;
-
-	Serial.print("Token: ");
-	Serial.println(cPacket->token[0]);
-
 
 	if (! errorFormatFlag)
 	{
@@ -361,25 +361,34 @@ void responseForGet(CoapPacket *cPacket)
 
 			options[0].optionType = CONTENT_FORMAT;
 			options[0].optionLength = 1;
-			options[0].optionValue = (byte*) malloc(options[0].optionLength * sizeof(byte*));
+		//	options[0].optionValue = (byte*) malloc(options[0].optionLength * sizeof(byte*));
+   options[0].optionValue = new byte[options[0].optionLength];
 			options[0].optionValue[0] = LINK_FORMAT; //core link format
 
 			responsePacket.options = options;
 
-			responsePacket.payloadLength = 86;
-			char payload[] = "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
+			delay(1);
+      responsePacket.payload = new char[86];
+      if (responsePacket.payload == NULL)
+        Serial.println("pamiec");
+      responsePacket.payload =  "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
+			//char payload[] = "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
+      responsePacket.payloadLength = 86;
 
-			Serial.print("payload length: ");
-			Serial.println(sizeof(payload)/sizeof(char));
+      delay(1);
 
-			responsePacket.payload =payload;
+      for (byte k=0; k<responsePacket.payloadLength ; k++ )
+        Serial.print(char(responsePacket.payload[k]));
+      
+//			Serial.print("payload length: ");
+//			Serial.println(sizeof(payload)/sizeof(char));
+
+			//responsePacket.payload =payload;
 		}
 		else if (uriPathType == POTENTIOMETR) {
 
     sendGetPotentiometrValueMessage();
 			uint16_t receiveValue=receivePotentiometrValueFromMini();
-			Serial.print ("Odebrane: ");
-			Serial.println(receiveValue);
 
 			responsePacket.optionsNumber =1;
 			Option options[responsePacket.optionsNumber];
@@ -401,14 +410,14 @@ void responseForGet(CoapPacket *cPacket)
 			else
 				responsePacket.payloadLength = 1;
 
-			byte* payload = (byte*) malloc(responsePacket.payloadLength * sizeof(byte));
+		//	byte* payload = (byte*) malloc(responsePacket.payloadLength * sizeof(byte));
+     Serial.println("new payload 1");
+    byte* payload = new byte[responsePacket.payloadLength];
 			uint16_t prevValue = 0;
 			for (byte i=0; i<responsePacket.payloadLength; i++ ) {
 				payload[i] = receiveValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
 				prevValue = (prevValue + payload[i]) * 10;
 				payload[i] += '0';
-				Serial.print("payload : ");
-				Serial.println(payload[i]);
 			}
 
 			responsePacket.payload = payload;
@@ -439,8 +448,6 @@ void responseForGet(CoapPacket *cPacket)
 				payload[i] = lampValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
 				prevValue = (prevValue + payload[i]) * 10;
 				payload[i] += '0';
-				Serial.print("payload : ");
-				Serial.println(payload[i]);
 			}
 
 			responsePacket.payload = payload;
@@ -461,14 +468,22 @@ void responseForGet(CoapPacket *cPacket)
 
 		responsePacket.payload = diagnosticPayload;
 	}
-printCoapPacket(&responsePacket);
+//printCoapPacket(&responsePacket);
 	sendResponse(&responsePacket);
 
 	// Zwolnienie pamieci z optionValue
 	for (byte i=0; i<responsePacket.optionsNumber; i++ ) {
 		if (responsePacket.options[i].optionLength > 0)
-			free(responsePacket.options[i].optionValue);
+   {
+			//free(responsePacket.options[i].optionValue); 
+			Serial.println("delete: option value1");
+      delete [] responsePacket.options[i].optionValue;
+   }
 	}
+ if (responsePacket.payloadLength >0){
+  Serial.println("delete payload response");
+  delete [] responsePacket.payload;
+ }
 }
 
 void responseForPing(CoapPacket *cPacket)
