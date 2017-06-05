@@ -26,7 +26,7 @@ const uint16_t other_node = 01;
 
 
 struct payload_t {                 // Structure of our payload
-	unsigned long ms;
+	unsigned short ms;
 	unsigned short value;
 };
 
@@ -34,7 +34,7 @@ struct payload_t {                 // Structure of our payload
 byte packetBuffer[MAX_BUFFER];
 
 unsigned short valueP;
-unsigned short lampValue = 0;
+
 
 struct Option
 {
@@ -83,9 +83,13 @@ enum messageCodes
 	GET = 1,					//0.01
 	PUT = 3,					//0.03
 	CREATED = 65,				//2.01
+  CHANGED= 68,        //2.04
 	CONTENT = 69,				//2.05
 	NOT_FOUND = 132,			//4.04
-	INTERNAL_SERVER_ERROR = 143	//5.00
+  UNSUPPORTED_FORMAT= 143, //4.15
+	INTERNAL_SERVER_ERROR = 160, //5.00
+  SERVICE_UNAVAILABLE = 163 //5.03
+  
 };
 
 bool areStringsEqual(const char *c1, const char *c2, byte c1Size, byte c2Size)
@@ -268,7 +272,6 @@ void responseForPut(CoapPacket *cPacket){
 	byte uriPathType = 0;
 	for(byte i=0; i< cPacket->optionsNumber; i++) 
 	{
-		
 			if (cPacket->options[i].optionType==URI_PATH)
 				if (areStringsEqual(cPacket->options[i].optionValue, "lamp",cPacket->options[i].optionLength, 4 )) {
 					uriPathType = LAMP;
@@ -285,16 +288,107 @@ void responseForPut(CoapPacket *cPacket){
 				break; // wychodzi z fora
 			}
 			lampNewValue = lampNewValue * 10 + digit;
+     if (lampNewValue>1023)
+     {
+      lampNewValue=1023;
+     }
 		}
-		
-		if (wrongTypePayloadErrorFlag)
+
+    
+   CoapPacket responsePacket;
+   responsePacket.optionsNumber = 0;
+   responsePacket.payloadLength = 0;
+
+
+   responsePacket.ver = 1;
+   responsePacket.type = NON;
+    responsePacket.tokenLength = cPacket->tokenLength;
+    responsePacket.messageID[0] = cPacket->messageID[0];
+    responsePacket.messageID[1] = cPacket->messageID[1] + 1;
+    // TOKEN
+    responsePacket.token = cPacket->token;
+    bool unsupportedFormatFlag=false;
+    short position = getAcceptPosition(cPacket);
+    if (position!=-1)
+      if (cPacket->options[position].optionLength!=0)
+        unsupportedFormatFlag=true;
+        
+		if (wrongTypePayloadErrorFlag || unsupportedFormatFlag){
+
+    
 			Serial.println("Zly payload");
-		else{
-			lampValue = lampNewValue;
-			Serial.print("lamp: "); Serial.println(lampNewValue);
+      responsePacket.code = UNSUPPORTED_FORMAT;
+        responsePacket.optionsNumber =1;
+          Option options[responsePacket.optionsNumber];
+    
+          options[0].optionType = CONTENT_FORMAT;
+          options[0].optionLength = 0;
+          responsePacket.options = options;
+          responsePacket.payload= new byte[3];
+          responsePacket.payload[0]='B';
+          responsePacket.payload[1]='A';
+          responsePacket.payload[2]='D';
+          responsePacket.payloadLength=3;
 		}
+		else{
+        Serial.print("lamp: "); Serial.println(lampNewValue);
+    		sendPutLampMessage(lampNewValue);
+       short answer=receiveValueFromMini();
+       if (answer==200)
+       {
+        responsePacket.code = CHANGED;
+        responsePacket.optionsNumber =1;
+          Option options[responsePacket.optionsNumber];
+    
+          options[0].optionType = CONTENT_FORMAT;
+          options[0].optionLength = 0;
+          responsePacket.options = options;
+          responsePacket.payload= new byte[2];
+          responsePacket.payload[0]='O';
+          responsePacket.payload[1]='K';
+          responsePacket.payloadLength=2;
+
+         delay(1);
+       }
+       else {
+        Serial.println("Wartosc nieustawiona");
+      
+       responsePacket.code = SERVICE_UNAVAILABLE;
+        responsePacket.optionsNumber =1;
+          Option options[responsePacket.optionsNumber];
+    
+          options[0].optionType = CONTENT_FORMAT;
+          options[0].optionLength = 0;
+          responsePacket.options = options;
+          responsePacket.payload= new byte[3];
+          responsePacket.payload[0]='B';
+          responsePacket.payload[1]='A';
+          responsePacket.payload[2]='D';
+          responsePacket.payloadLength=3;
+        
+       }
+		}
+
+   sendResponse(&responsePacket);
+
+   if (responsePacket.payloadLength>0)
+   delete [] responsePacket.payload;
 	}
+
+ 
 }
+
+short getAcceptPosition(CoapPacket *cPacket)
+{
+  for (byte i=0; i < cPacket->optionsNumber;i++)
+  {
+    if (cPacket->options[i].optionType==ACCEPT)
+      return i;
+    
+  }
+  return -1;
+}
+
 
 void responseForGet(CoapPacket *cPacket)
 {
@@ -387,9 +481,10 @@ void responseForGet(CoapPacket *cPacket)
 		}
 		else if (uriPathType == POTENTIOMETR) {
 
-    sendGetPotentiometrValueMessage();
-			uint16_t receiveValue=receivePotentiometrValueFromMini();
-
+    sendGetValueMessage(1);
+			uint16_t receiveValue=receiveValueFromMini();
+    Serial.print("Potenc: ");
+    Serial.println(receiveValue);
 			responsePacket.optionsNumber =1;
 			Option options[responsePacket.optionsNumber];
 
@@ -423,7 +518,11 @@ void responseForGet(CoapPacket *cPacket)
 			responsePacket.payload = payload;
 		}
 		else if (uriPathType == LAMP) 
-		{
+		{  sendGetValueMessage(2);
+     uint16_t receiveValue=receiveValueFromMini();
+     Serial.println("lamp");
+     Serial.println(receiveValue);
+    
 			responsePacket.optionsNumber =1;
 			Option options[responsePacket.optionsNumber];
 
@@ -433,22 +532,40 @@ void responseForGet(CoapPacket *cPacket)
 
 			responsePacket.options = options;
 
-			if (lampValue >= 1000)
-				responsePacket.payloadLength = 4;
-			else if (lampValue >= 100)
-				responsePacket.payloadLength = 3;
-			else if (lampValue >= 10)
-				responsePacket.payloadLength = 2;
-			else
-				responsePacket.payloadLength = 1;
+//			if (lampValue >= 1000)
+//				responsePacket.payloadLength = 4;
+//			else if (lampValue >= 100)
+//				responsePacket.payloadLength = 3;
+//			else if (lampValue >= 10)
+//				responsePacket.payloadLength = 2;
+//			else
+//				responsePacket.payloadLength = 1;
+//
+//			byte payload[responsePacket.payloadLength];
+//			uint16_t prevValue = 0;
+//			for (byte i=0; i<responsePacket.payloadLength; i++ ) {
+//				payload[i] = lampValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
+//				prevValue = (prevValue + payload[i]) * 10;
+//				payload[i] += '0';
+//			}
+     if (receiveValue >= 1000)
+       responsePacket.payloadLength = 4;
+      else if (receiveValue >= 100)
+        responsePacket.payloadLength = 3;
+      else if (receiveValue >= 10)
+        responsePacket.payloadLength = 2;
+      else
+        responsePacket.payloadLength = 1;
 
-			byte payload[responsePacket.payloadLength];
-			uint16_t prevValue = 0;
-			for (byte i=0; i<responsePacket.payloadLength; i++ ) {
-				payload[i] = lampValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
-				prevValue = (prevValue + payload[i]) * 10;
-				payload[i] += '0';
-			}
+    //  byte* payload = (byte*) malloc(responsePacket.payloadLength * sizeof(byte));
+     Serial.println("new payload 1");
+    byte* payload = new byte[responsePacket.payloadLength];
+      uint16_t prevValue = 0;
+      for (byte i=0; i<responsePacket.payloadLength; i++ ) {
+        payload[i] = receiveValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
+        prevValue = (prevValue + payload[i]) * 10;
+        payload[i] += '0';
+      }
 
 			responsePacket.payload = payload;
 		}
@@ -509,18 +626,18 @@ void responseForPing(CoapPacket *cPacket)
 unsigned short getPotentiometrValueOptionSelected()
 {
 	Serial.println("[odbior wartosci otencjometru]");
-	sendGetPotentiometrValueMessage();
-	currentValue = receivePotentiometrValueFromMini();
+	sendGetValueMessage(1);
+	currentValue = receiveValueFromMini();
 	Serial.println(currentValue);
 	return currentValue;
 }
 
 
-bool sendGetPotentiometrValueMessage() {
+bool sendGetValueMessage(byte type) {
 
 	network.update();
 
-	payload_t payload = { millis(), 11};
+	payload_t payload = { type, 0};
 	RF24NetworkHeader header(/*to node*/ other_node);
 	bool ok = network.write(header, &payload, sizeof(payload));
 
@@ -528,7 +645,7 @@ bool sendGetPotentiometrValueMessage() {
 
 }
 
-unsigned short receivePotentiometrValueFromMini() {
+unsigned short receiveValueFromMini() {
 	while(true)
 	{
 	  network.update();
@@ -537,13 +654,27 @@ unsigned short receivePotentiometrValueFromMini() {
   		RF24NetworkHeader header;
   		payload_t payload;
   		network.read(header, &payload, sizeof(payload));
-  		Serial.print("hahah ");
-  		Serial.println(payload.value);
   		return payload.value;
 		}
 	}
  return 2000;
 }
+
+
+bool sendPutLampMessage(unsigned short value)
+{
+  network.update();
+
+  payload_t payload = {3,value};
+  RF24NetworkHeader header(/*to node*/ other_node);
+  bool ok = network.write(header, &payload, sizeof(payload));
+
+  return ok;
+  
+  
+  }
+
+
 /*
   void sendResponse(unsigned short value){
   udp.beginPacket(udp.remoteIP(), udp.remotePort());
