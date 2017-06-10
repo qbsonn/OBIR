@@ -465,7 +465,9 @@ void responseForGet(CoapPacket *cPacket)
       responsePacket.payload = new char[86];
       if (responsePacket.payload == NULL)
         Serial.println("pamiec");
-      responsePacket.payload =  "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
+      strcpy(responsePacket.payload, "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0");
+      
+      //responsePacket.payload =  "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
 			//char payload[] = "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
       responsePacket.payloadLength = 86;
 
