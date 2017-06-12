@@ -1,7 +1,7 @@
 #include <SPI.h>
 #include <Ethernet.h>
-#include <EthernetUdp.h>
 #include <stdlib.h>
+#include <EthernetUdp.h>
 #include <RF24Network.h>
 #include <RF24.h>
 #include <SPI.h>
@@ -15,8 +15,11 @@ EthernetUDP udp;
 const byte MAX_BUFFER = 255;
 byte currentValue = 255;
 
-short localPort = 1244;
+byte seqNumber = 67;
 
+short localPort = 1244;
+const char* wellKnownCore = "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
+byte wellKnownSize = 86;
 
 RF24 radio(7, 8);               // nRF24L01(+) radio attached using Getting Started board
 RF24Network network(radio);      // Network uses that radio
@@ -24,6 +27,13 @@ RF24Network network(radio);      // Network uses that radio
 const uint16_t this_node = 00;    // Address of our node in Octal format ( 04,031, etc)
 const uint16_t other_node = 01;
 
+
+struct Observer{
+	IPAddress address;
+	uint16_t port;
+	byte tokenLength;
+	byte *token;
+};
 
 struct payload_t {                 // Structure of our payload
 	unsigned short ms;
@@ -35,6 +45,10 @@ byte packetBuffer[MAX_BUFFER];
 
 unsigned short valueP;
 
+struct Block2Param{
+	byte blockNumber;
+	byte blockSize;
+};
 
 struct Option
 {
@@ -74,7 +88,12 @@ enum acceptedFormats
 
 enum optionTypes
 {
-	URI_PATH = 11, CONTENT_FORMAT = 12, ACCEPT = 17
+	OBSERVE = 6,
+	URI_PATH = 11, 
+	CONTENT_FORMAT = 12, 
+	ACCEPT = 17,
+	BLOCK2 = 23,
+	SIZE2 = 28
 };
 
 enum messageCodes
@@ -83,14 +102,18 @@ enum messageCodes
 	GET = 1,					//0.01
 	PUT = 3,					//0.03
 	CREATED = 65,				//2.01
-  CHANGED= 68,        //2.04
+  	CHANGED= 68,        		//2.04
 	CONTENT = 69,				//2.05
 	NOT_FOUND = 132,			//4.04
-  UNSUPPORTED_FORMAT= 143, //4.15
-	INTERNAL_SERVER_ERROR = 160, //5.00
-  SERVICE_UNAVAILABLE = 163 //5.03
+  	UNSUPPORTED_FORMAT= 143, 	//4.15
+	INTERNAL_SERVER_ERROR = 160,//5.00
+  	SERVICE_UNAVAILABLE = 163 	//5.03
   
 };
+
+Observer observers[3];
+byte observersNumber = 0;
+
 
 bool areStringsEqual(const char *c1, const char *c2, byte c1Size, byte c2Size)
 {
@@ -126,6 +149,9 @@ void loop() {
 	if (packetSize) {
 		receivePacket();
 	}
+			uint16_t receiveValuee = 100;
+     		sendToObservers(receiveValuee);
+     		delay(2000);
 }
 
 
@@ -249,8 +275,10 @@ void receivePacket() {
 	if (cPacket.payloadLength >0){
 		//free(cPacket.payload);
      
-    delete [] cPacket.payload;
+    	delete [] cPacket.payload;
      }
+
+
 }
 
 void handlePacket(CoapPacket *cPacket)
@@ -392,9 +420,12 @@ short getAcceptPosition(CoapPacket *cPacket)
 
 void responseForGet(CoapPacket *cPacket)
 {
-
 	bool errorFormatFlag = false;
+	bool deleteOptions = false;
 	byte uriPathType = 0;
+	byte blockSizeIndex = 255;
+	bool isSize2Opt = false;
+	bool isObserve = false;
 
 	CoapPacket responsePacket;
 	responsePacket.optionsNumber = 0;
@@ -402,37 +433,49 @@ void responseForGet(CoapPacket *cPacket)
 
 	for(byte i=0; i< cPacket->optionsNumber; i++) 
 	{
-	
-    if (cPacket->options[i].optionType==URI_PATH)
-    {
-			
-				if (areStringsEqual(cPacket->options[i].optionValue, ".well-known",cPacket->options[i].optionLength, 11 )) {
-					if ((areStringsEqual(cPacket->options[i+1].optionValue, "core",cPacket->options[i+1].optionLength, 4))) {
-						uriPathType = WELL_KNOWN_CORE;
+	    if (cPacket->options[i].optionType==URI_PATH)
+	    {
+				
+					if (areStringsEqual(cPacket->options[i].optionValue, ".well-known",cPacket->options[i].optionLength, 11 )) {
+						if ((areStringsEqual(cPacket->options[i+1].optionValue, "core",cPacket->options[i+1].optionLength, 4))) {
+							uriPathType = WELL_KNOWN_CORE;
+						}
 					}
-				}
-				else if (areStringsEqual(cPacket->options[i].optionValue, "potentiometr",cPacket->options[i].optionLength, 12 )) {
-					uriPathType = POTENTIOMETR;
-				}
-				else if (areStringsEqual(cPacket->options[i].optionValue, "lamp",cPacket->options[i].optionLength, 4 )) {
-					uriPathType = LAMP;
-				}
+					else if (areStringsEqual(cPacket->options[i].optionValue, "potentiometr",cPacket->options[i].optionLength, 12 )) {
+						uriPathType = POTENTIOMETR;
+					}
+					else if (areStringsEqual(cPacket->options[i].optionValue, "lamp",cPacket->options[i].optionLength, 4 )) {
+						uriPathType = LAMP;
+					}
+					
+	    }
+	    else if (cPacket->options[i].optionType==CONTENT_FORMAT)
+	    {
+				// Czy to wgl bedzie???????????????????????????????????????????????
 				
-    }
-    else 
-    if (cPacket->options[i].optionType==CONTENT_FORMAT)
-    {
-			// Czy to wgl bedzie???????????????????????????????????????????????
-			
-    }
-    else if (cPacket->options[i].optionType==ACCEPT)
-    {
-				if (cPacket->options[i].optionValue[0] != PLAIN)
-				{
-					errorFormatFlag = true;
-				}
-				
-    }
+	    }
+	    else if (cPacket->options[i].optionType==ACCEPT)
+	    {
+					if (cPacket->options[i].optionValue[0] != PLAIN)
+					{
+						errorFormatFlag = true;
+					}
+					
+	    }
+	    else if (cPacket->options[i].optionType==BLOCK2)
+	    {
+	    	blockSizeIndex = i;
+	    }
+	    else if (cPacket->options[i].optionType==SIZE2)
+	    {
+	    	if (cPacket->options[i].optionValue[0] == 0){
+	    		isSize2Opt = true;
+	    	}
+	    }
+	    else if (cPacket->options[i].optionType==OBSERVE)
+	    {
+	    	isObserve = true;	
+	    }
 	}
 
 	// HEADER
@@ -450,53 +493,123 @@ void responseForGet(CoapPacket *cPacket)
 
 		if (uriPathType == WELL_KNOWN_CORE) 
 		{
-			responsePacket.optionsNumber =1;
-			Option options[responsePacket.optionsNumber];
+			if (isSize2Opt){
+				responsePacket.optionsNumber = 3;
+			}else{
+				responsePacket.optionsNumber = 2;
+			}
+			
+			//Option options[responsePacket.optionsNumber];
+			deleteOptions = true;
+			Option* options = new Option[responsePacket.optionsNumber];
 
 			options[0].optionType = CONTENT_FORMAT;
 			options[0].optionLength = 1;
-		//	options[0].optionValue = (byte*) malloc(options[0].optionLength * sizeof(byte*));
-   options[0].optionValue = new byte[options[0].optionLength];
+   			options[0].optionValue = new byte[options[0].optionLength];
 			options[0].optionValue[0] = LINK_FORMAT; //core link format
 
+			options[1].optionType = BLOCK2;
+			options[1].optionLength = 1;
+   			options[1].optionValue = new byte[options[1].optionLength];
+
+			if (isSize2Opt){
+				options[2].optionType = SIZE2;
+				options[2].optionLength = 1;
+	   			options[2].optionValue = new byte[1];
+				options[2].optionValue[0] = wellKnownSize;
+			}
+
+			
 			responsePacket.options = options;
 
-			delay(1);
-      responsePacket.payload = new char[86];
-      if (responsePacket.payload == NULL)
-        Serial.println("pamiec");
-      strcpy(responsePacket.payload, "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0");
-      
-      //responsePacket.payload =  "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
-			//char payload[] = "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
-      responsePacket.payloadLength = 86;
+			if (blockSizeIndex != 255){ // nie jest to pierwszy blok
+				delay(1);
+				Block2Param block = parseBlock2(cPacket->options[blockSizeIndex]);
 
-      delay(1);
+				bool isNextBlock = false;
+				if(wellKnownSize > (block.blockNumber+1) * power(2,4+block.blockSize)){ // czy bedzie jeszcze jeden blok
+					isNextBlock = true;
+				}
+				
+				options[1].optionValue[0] = block.blockNumber ;
+				options[1].optionValue[0] = options[1].optionValue[0] << 1; 
+				if (isNextBlock){
+					options[1].optionValue[0] = options[1].optionValue[0] + 1; // bedzie nastepny blok
+				}
+				options[1].optionValue[0] = options[1].optionValue[0] << 3;
+				options[1].optionValue[0] = options[1].optionValue[0] + block.blockSize; // 32 bajtowe bloki
 
-      for (byte k=0; k<responsePacket.payloadLength ; k++ )
-        Serial.print(char(responsePacket.payload[k]));
-      
-//			Serial.print("payload length: ");
-//			Serial.println(sizeof(payload)/sizeof(char));
+				responsePacket.payloadLength = power(2,4+block.blockSize);
 
-			//responsePacket.payload =payload;
+				if (!isNextBlock){
+					responsePacket.payloadLength = wellKnownSize - (block.blockNumber) * power(2,4+block.blockSize);
+				}
+				
+				responsePacket.payload = new char[responsePacket.payloadLength];
+				byte plus =(block.blockNumber) * power(2,4+block.blockSize);
+				if (block.blockNumber != 0){
+					Serial.print("pierwszy blok. plus= "); Serial.println(plus);
+					//plus++;
+				}
+				memcpy(responsePacket.payload , wellKnownCore + plus, responsePacket.payloadLength);
+				delay(1);
+			}
+			else{	// wysylanie pierwszego bloku
+				delay(1);
+				options[1].optionValue[0] = 1;	// bedzie nastepny blok
+				options[1].optionValue[0] = options[1].optionValue[0] << 3;
+				options[1].optionValue[0] = options[1].optionValue[0] + 1; // 32 bajtowe bloki
+
+				responsePacket.payload = new char[32];
+				memcpy(responsePacket.payload, wellKnownCore, 32);  
+		    	responsePacket.payloadLength = 32;
+		
+		      	delay(1);
+			}
+			
+		  
+		    //strcpy(responsePacket.payload, "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0");
+		    
+		    
+
+//		    for (byte k=0; k<responsePacket.payloadLength ; k++ )
+//		        Serial.print(char(responsePacket.payload[k]));
+//      
+
 		}
-		else if (uriPathType == POTENTIOMETR) {
-
-    sendGetValueMessage(1);
+		else if (uriPathType == POTENTIOMETR) 
+		{
+			registerObserver(cPacket);
+			
+    		sendGetValueMessage(1);
 			uint16_t receiveValue=receiveValueFromMini();
-    Serial.print("Potenc: ");
-    Serial.println(receiveValue);
-			responsePacket.optionsNumber =1;
-			Option options[responsePacket.optionsNumber];
+		    Serial.print("Potenc: ");
+		    Serial.println(receiveValue);
 
 			responsePacket.optionsNumber =1;
-			options[0].optionType = CONTENT_FORMAT;
-			options[0].optionLength = 0;
+			if (isObserve){
+				responsePacket.optionsNumber = 2;
+			}
+			
+			//Option options[responsePacket.optionsNumber];
+			Option* options = new Option[responsePacket.optionsNumber];
+			deleteOptions = true;
+
+		
+			if (isObserve){
+				options[0].optionType = OBSERVE;
+				options[0].optionLength = 1;
+	   			options[0].optionValue = new byte[options[0].optionLength];
+				options[0].optionValue[0] = 66;
+
+				options[1].optionType = CONTENT_FORMAT;
+				options[1].optionLength = 0;
+			}else{
+				options[0].optionType = CONTENT_FORMAT;
+				options[0].optionLength = 0;
+			}
 
 			responsePacket.options = options;
-			//      options[0].optionValue = (byte*) malloc(options[0].optionLength * sizeof(byte*));
-			//      options[0].optionValue[0] = 1;
 
 			if (receiveValue >= 1000)
 				responsePacket.payloadLength = 4;
@@ -507,11 +620,10 @@ void responseForGet(CoapPacket *cPacket)
 			else
 				responsePacket.payloadLength = 1;
 
-		//	byte* payload = (byte*) malloc(responsePacket.payloadLength * sizeof(byte));
-     Serial.println("new payload 1");
-    byte* payload = new byte[responsePacket.payloadLength];
+		    Serial.println("new payload 1");
+		    byte* payload = new byte[responsePacket.payloadLength];
 			uint16_t prevValue = 0;
-			for (byte i=0; i<responsePacket.payloadLength; i++ ) {
+			for (byte i=0; i<responsePacket.payloadLength; i++ ) { // konwersja payloadu
 				payload[i] = receiveValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
 				prevValue = (prevValue + payload[i]) * 10;
 				payload[i] += '0';
@@ -520,10 +632,11 @@ void responseForGet(CoapPacket *cPacket)
 			responsePacket.payload = payload;
 		}
 		else if (uriPathType == LAMP) 
-		{  sendGetValueMessage(2);
-     uint16_t receiveValue=receiveValueFromMini();
-     Serial.println("lamp");
-     Serial.println(receiveValue);
+		{  
+			sendGetValueMessage(2);
+	     uint16_t receiveValue=receiveValueFromMini();
+	     Serial.println("lamp");
+	     Serial.println(receiveValue);
     
 			responsePacket.optionsNumber =1;
 			Option options[responsePacket.optionsNumber];
@@ -592,18 +705,111 @@ void responseForGet(CoapPacket *cPacket)
 
 	// Zwolnienie pamieci z optionValue
 	for (byte i=0; i<responsePacket.optionsNumber; i++ ) {
-		if (responsePacket.options[i].optionLength > 0)
-   {
-			//free(responsePacket.options[i].optionValue); 
-			Serial.println("delete: option value1");
-      delete [] responsePacket.options[i].optionValue;
-   }
+		if (responsePacket.options[i].optionLength > 0){
+      		delete [] responsePacket.options[i].optionValue;
+   		}
+	}
+	if (deleteOptions){
+		delete [] responsePacket.options;
 	}
  if (responsePacket.payloadLength >0){
-  Serial.println("delete payload response");
-  delete [] responsePacket.payload;
+	  delete [] responsePacket.payload;
  }
 }
+
+void registerObserver(CoapPacket *cPacket){
+	if (observersNumber < 3){
+		Serial.println("Register observer");
+		Observer obs;
+		obs.address = udp.remoteIP();
+		obs.port = udp.remotePort();
+		obs.tokenLength = cPacket->tokenLength;
+		obs.token = new byte[obs.tokenLength];
+		memcpy(obs.token, cPacket->token, obs.tokenLength);
+		observers[observersNumber] = obs;
+
+
+		Serial.print("port: "); Serial.println(obs.port);
+		observersNumber++;
+	}
+}
+
+void sendToObservers(uint16_t receiveValue){
+	CoapPacket responsePacket;
+	responsePacket.optionsNumber = 0;
+	responsePacket.payloadLength = 0;
+
+	// HEADER
+	responsePacket.ver = 1;
+	responsePacket.type = NON;
+	responsePacket.code = CONTENT;
+	responsePacket.messageID[0] = 1;
+	responsePacket.messageID[1] = 1;
+	responsePacket.payloadLength=0;
+
+	responsePacket.optionsNumber = 2;
+	Option options[responsePacket.optionsNumber];
+	options[0].optionType = OBSERVE;
+	options[0].optionLength = 1;
+	options[0].optionValue = new byte[options[0].optionLength];
+	options[0].optionValue[0] = seqNumber++; // zmienic!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	options[1].optionType = CONTENT_FORMAT;
+	options[1].optionLength = 0;
+
+	responsePacket.options = options;
+
+	if (receiveValue >= 1000)
+		responsePacket.payloadLength = 4;
+	else if (receiveValue >= 100)
+		responsePacket.payloadLength = 3;
+	else if (receiveValue >= 10)
+		responsePacket.payloadLength = 2;
+	else
+		responsePacket.payloadLength = 1;
+
+    byte* payload = new byte[responsePacket.payloadLength];
+	uint16_t prevValue = 0;
+	for (byte i=0; i<responsePacket.payloadLength; i++ ) { // konwersja payloadu
+		payload[i] = receiveValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
+		prevValue = (prevValue + payload[i]) * 10;
+		payload[i] += '0';
+	}
+
+	responsePacket.payload = payload;
+	Serial.print("payload: ");
+	for (byte i=0; i< responsePacket.payloadLength; i++){
+		Serial.print(char(responsePacket.payload[i]));
+	}
+	Serial.println();
+	
+	for (byte i=0; i<observersNumber; i++){
+		Serial.println("wysylanie");
+		responsePacket.tokenLength = observers[i].tokenLength;
+		responsePacket.token = observers[i].token;
+		sendResponse(&responsePacket, observers[i].address, observers[i].port);
+	}
+	
+
+	// Zwolnienie pamieci z optionValue
+	for (byte i=0; i<responsePacket.optionsNumber; i++ ) {
+		if (responsePacket.options[i].optionLength > 0){
+      		delete [] responsePacket.options[i].optionValue;
+   		}
+	}
+	
+	 if (responsePacket.payloadLength >0){
+		  delete [] responsePacket.payload;
+	 }
+}
+
+Block2Param parseBlock2(Option option){
+	Block2Param block;
+	block.blockNumber = option.optionValue[0] >> 4;
+	block.blockSize = byte(option.optionValue[0] << 5) >> 5;
+	return block;
+}
+
 
 void responseForPing(CoapPacket *cPacket)
 {
@@ -752,10 +958,9 @@ void printCoapPacket(CoapPacket *cPacket) {
 	Serial.println();
 }
 
-
-void sendResponse(CoapPacket *cPacket) {
-	udp.beginPacket(udp.remoteIP(), udp.remotePort());
-
+void sendResponse(CoapPacket *cPacket, IPAddress address, uint16_t port){
+	udp.beginPacket(address, port);
+	
 	int packetSize = calculateCoapPacketSize(cPacket);
 //	Serial.print("Packet size: ");
 //	Serial.println(packetSize);
@@ -831,8 +1036,12 @@ void sendResponse(CoapPacket *cPacket) {
 	}
 
 	int len = udp.write(message, sizeof (message));
-
+	Serial.println("wyslane");
 	udp.endPacket();
+}
+void sendResponse(CoapPacket *cPacket) {
+	sendResponse(cPacket, udp.remoteIP(), udp.remotePort());
+	//sendToObservers(100);
 }
 
 int calculateCoapPacketSize(CoapPacket *cPacket) {
@@ -867,5 +1076,11 @@ int calculateCoapPacketSize(CoapPacket *cPacket) {
 	return size;
 }
 
-
+uint16_t power(byte base, byte number){
+	uint16_t value = 1;
+	for (byte i=0; i< number; i++){
+		value = value * base;
+	}
+	return value;
+}
 
