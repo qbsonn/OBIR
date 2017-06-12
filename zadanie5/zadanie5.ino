@@ -18,8 +18,8 @@ byte currentValue = 255;
 byte seqNumber = 67;
 
 short localPort = 1244;
-const char* wellKnownCore = "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0";
-byte wellKnownSize = 86;
+const char* wellKnownCore = "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0;</loss>;rt=\"Loss metric\";ct=0;";
+byte wellKnownSize = 117;
 
 RF24 radio(7, 8);               // nRF24L01(+) radio attached using Getting Started board
 RF24Network network(radio);      // Network uses that radio
@@ -78,7 +78,7 @@ enum messageTypes
 
 enum uriPaths
 {
-	WELL_KNOWN_CORE = 1, POTENTIOMETR = 2, LAMP = 3
+	WELL_KNOWN_CORE = 1, POTENTIOMETR = 2, LAMP = 3, LOSS = 4
 };
 
 enum acceptedFormats
@@ -113,7 +113,9 @@ enum messageCodes
 
 Observer observer;
 byte observersNumber = 0;
-
+byte lossPacketNumber = 0;
+byte RTT = 0;
+short latency = 0;
 
 bool areStringsEqual(const char *c1, const char *c2, byte c1Size, byte c2Size)
 {
@@ -457,6 +459,9 @@ void responseForGet(CoapPacket *cPacket)
 					else if (areStringsEqual(cPacket->options[i].optionValue, "lamp",cPacket->options[i].optionLength, 4 )) {
 						uriPathType = LAMP;
 					}
+         else if (areStringsEqual(cPacket->options[i].optionValue, "loss",cPacket->options[i].optionLength, 4 )) {
+           uriPathType = LOSS;
+          }
 					
 	    }
 	    else if (cPacket->options[i].optionType==CONTENT_FORMAT)
@@ -704,6 +709,67 @@ void responseForGet(CoapPacket *cPacket)
 
 			responsePacket.payload = payload;
 		}
+		else if (uriPathType == LOSS)
+    {  
+      if(RTT != 0)
+      { 
+        latency += RTT;
+      }
+       if (isSize2Opt){
+        responsePacket.optionsNumber = 3;
+      }else{
+        responsePacket.optionsNumber = 2;
+      }
+     
+      deleteOptions = true;
+      Option* options = new Option[responsePacket.optionsNumber];
+
+      options[0].optionType = CONTENT_FORMAT;
+      options[0].optionLength = 1;
+      options[0].optionValue = new byte[options[0].optionLength];
+      options[0].optionValue[0] = LINK_FORMAT; //core link format
+
+      options[1].optionType = BLOCK2;
+      options[1].optionLength = 1;
+      options[1].optionValue = new byte[options[1].optionLength];
+
+      if (isSize2Opt){
+        options[2].optionType = SIZE2;
+        options[2].optionLength = 1;
+        options[2].optionValue = new byte[1];
+        options[2].optionValue[0] = 1;
+      }
+
+      responsePacket.options = options;
+
+      Block2Param block = parseBlock2(cPacket->options[blockSizeIndex]);
+    
+      bool isNextBlock = true;
+      byte blockSize = 32;
+
+      options[1].optionValue[0] = 1;  // bedzie nastepny blok
+      if (lossPacketNumber == 99)
+      {
+        isNextBlock = false;
+        options[1].optionValue[0] = 0;  // nie ma kolejnego bloku
+        //wyswietl wynik
+        Serial.print("Average RTT (100 packets): ");
+        Serial.println(latency/100);
+        lossPacketNumber = 0;
+        latency = 0;
+      }
+
+      options[1].optionValue[0] = options[1].optionValue[0] << 3;
+      options[1].optionValue[0] = options[1].optionValue[0] + 1; // 32 bajtowe bloki
+
+      responsePacket.payload = new char[1];
+      responsePacket.payloadLength = 1;
+
+      memcpy(responsePacket.payload , "1", responsePacket.payloadLength);
+      lossPacketNumber +=1;
+      delay(1);
+      RTT = millis();
+    }
 		else {
 			responsePacket.code = NOT_FOUND; //4.04
 			responsePacket.payloadLength = 14;
@@ -1067,7 +1133,6 @@ void sendResponse(CoapPacket *cPacket, IPAddress address, uint16_t port){
 	}
 
 	int len = udp.write(message, sizeof (message));
-	Serial.println("wyslane");
 	udp.endPacket();
 }
 void sendResponse(CoapPacket *cPacket) {
