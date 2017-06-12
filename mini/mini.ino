@@ -80,9 +80,11 @@ void loop() {
       }
       else if (payload1.type == 4){	// Zacznij obserwowac
       	isObservable = true;
+        Serial.println("Observe");
       }
       else if (payload1.type == 6){ // stop obserwowania
       	isObservable = false;
+        Serial.println("Dont observe");
       }
 
         
