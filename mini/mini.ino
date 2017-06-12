@@ -80,6 +80,7 @@ void loop() {
       }
       else if (payload1.type == 4){	// Zacznij obserwowac
       	isObservable = true;
+      	prevPotentioValue = analogRead(A0);
         Serial.println("Observe");
       }
       else if (payload1.type == 6){ // stop obserwowania
