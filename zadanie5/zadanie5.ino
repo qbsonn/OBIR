@@ -178,7 +178,7 @@ void receivePacket() {
 	byte optionHeader; // pierwszy bajt opcji
 	int optionCounter = 0; // zlicza opcje
 	int currentByteNumber = 4 + cPacket.tokenLength;
-	byte prevOptionType=0; // potrzebne żeby dodać do option delta
+	byte prevOptionType=0; // potrzebne ĹĽeby dodaÄ‡ do option delta
 	bool isNotPayloadByte = true;
 
 	Option options[6]; // zakladam ze jest max 6 opcji
@@ -186,7 +186,7 @@ void receivePacket() {
 
 	while((currentByteNumber < packetLength) && isNotPayloadByte)
 	{
-		if (packetBuffer[currentByteNumber] == 255) // bajt samych jedynek rozpoczynający payload
+		if (packetBuffer[currentByteNumber] == 255) // bajt samych jedynek rozpoczynajÄ…cy payload
 		{
 			isNotPayloadByte = false;
 		}
@@ -1068,7 +1068,7 @@ int calculateCoapPacketSize(CoapPacket *cPacket) {
 		size += cPacket->options[i].optionLength;
 	}
 
-	if (cPacket->payloadLength > 0) { // jeśli tak to payload istnieje
+	if (cPacket->payloadLength > 0) { // jeĹ›li tak to payload istnieje
 		size++; // bajt samych jedynek
 		size += cPacket->payloadLength;
 	}
@@ -1083,4 +1083,5 @@ uint16_t power(byte base, byte number){
 	}
 	return value;
 }
+
 

@@ -10,6 +10,8 @@ RF24Network network(radio);
 const uint16_t this_node = 01;    
 const uint16_t other_node = 00;   
 
+const int sendInterval = 1000;
+
 struct payload_t {                 
   unsigned short type;
   unsigned short value;
@@ -20,7 +22,8 @@ unsigned long last_sent=0;
 unsigned long packets_sent;   
 
 unsigned short lampValue = 0;
-unsigned short prevPotentioValue = 0;
+signed short prevPotentioValue = 0;
+unsigned long lastSentMilis = 0;
 
 bool isObservable = false;
 
@@ -38,12 +41,19 @@ void setup() {
 void loop() {
   network.update();                 
 
-  if (isObservable){
-  	unsigned short newPotentioValue = analogRead(A0);
-  	if (newPotentioValue != prevPotentioValue){
+  if (isObservable && (millis() - lastSentMilis) >  sendInterval){
+  	signed short newPotentioValue = analogRead(A0);
+  	if (newPotentioValue > prevPotentioValue + 20 || newPotentioValue < prevPotentioValue - 20){
+      Serial.print("newValue ");
+      Serial.print(newPotentioValue);
+      Serial.print(" oldValue ");
+      Serial.print(prevPotentioValue);
+      Serial.println();
   		payload_t obsPayload = { 5, newPotentioValue };
   		prevPotentioValue = newPotentioValue;
+      
   		sendPayloadToUno(obsPayload);
+      lastSentMilis = millis(); 
   	}
   }
              
