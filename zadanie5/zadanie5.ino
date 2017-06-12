@@ -111,7 +111,7 @@ enum messageCodes
   
 };
 
-Observer observers[3];
+Observer observer;
 byte observersNumber = 0;
 
 
@@ -149,9 +149,19 @@ void loop() {
 	if (packetSize) {
 		receivePacket();
 	}
-			uint16_t receiveValuee = 100;
-     		sendToObservers(receiveValuee);
-     		delay(2000);
+			
+   
+	network.update();
+    if (network.available()){
+  		RF24NetworkHeader header;
+  		payload_t payload;
+  		network.read(header, &payload, sizeof(payload));
+
+		// wyslac do obserwowalnych
+  		uint16_t receivedValue = payload.value;
+     	sendToObservers(receivedValue);
+	}
+
 }
 
 
@@ -474,7 +484,15 @@ void responseForGet(CoapPacket *cPacket)
 	    }
 	    else if (cPacket->options[i].optionType==OBSERVE)
 	    {
-	    	isObserve = true;	
+	    	if (cPacket->options[i].optionValue[0] == 0){
+	    		isObserve = true;
+	    		Serial.println("Observe");
+	    	}
+	    	else if (cPacket->options[i].optionValue[0] == 1){
+	    		Serial.println("Cancel Observe");
+	    		stopObserving();
+	    	}
+	    		
 	    }
 	}
 
@@ -579,7 +597,9 @@ void responseForGet(CoapPacket *cPacket)
 		}
 		else if (uriPathType == POTENTIOMETR) 
 		{
-			registerObserver(cPacket);
+			if (isObserve){
+				registerObserver(cPacket);
+			}
 			
     		sendGetValueMessage(1);
 			uint16_t receiveValue=receiveValueFromMini();
@@ -718,18 +738,20 @@ void responseForGet(CoapPacket *cPacket)
 }
 
 void registerObserver(CoapPacket *cPacket){
-	if (observersNumber < 3){
+	if (observersNumber < 1){
 		Serial.println("Register observer");
-		Observer obs;
-		obs.address = udp.remoteIP();
-		obs.port = udp.remotePort();
-		obs.tokenLength = cPacket->tokenLength;
-		obs.token = new byte[obs.tokenLength];
-		memcpy(obs.token, cPacket->token, obs.tokenLength);
-		observers[observersNumber] = obs;
+		
+		observer.address = udp.remoteIP();
+		observer.port = udp.remotePort();
+		observer.tokenLength = cPacket->tokenLength;
+		observer.token = new byte[observer.tokenLength];
+		memcpy(observer.token, cPacket->token, observer.tokenLength);
 
+		// Wyslac do mini
+		payload_t payload = { 4, 0};
+		RF24NetworkHeader header(/*to node*/ other_node);
+		bool ok = network.write(header, &payload, sizeof(payload));
 
-		Serial.print("port: "); Serial.println(obs.port);
 		observersNumber++;
 	}
 }
@@ -783,12 +805,11 @@ void sendToObservers(uint16_t receiveValue){
 	}
 	Serial.println();
 	
-	for (byte i=0; i<observersNumber; i++){
-		Serial.println("wysylanie");
-		responsePacket.tokenLength = observers[i].tokenLength;
-		responsePacket.token = observers[i].token;
-		sendResponse(&responsePacket, observers[i].address, observers[i].port);
-	}
+	Serial.println("wysylanie");
+	responsePacket.tokenLength = observer.tokenLength;
+	responsePacket.token = observer.token;
+	sendResponse(&responsePacket, observer.address, observer.port);
+	
 	
 
 	// Zwolnienie pamieci z optionValue
@@ -810,6 +831,16 @@ Block2Param parseBlock2(Option option){
 	return block;
 }
 
+void stopObserving(){
+	// Usunac z listy
+	if (observersNumber > 0){
+		observersNumber = 0;
+	}
+	// wyslac do mini
+	payload_t payload = { 6, 0};
+	RF24NetworkHeader header(other_node);
+	bool ok = network.write(header, &payload, sizeof(payload));
+}
 
 void responseForPing(CoapPacket *cPacket)
 {
@@ -858,11 +889,11 @@ unsigned short receiveValueFromMini() {
 	{
 	  network.update();
 
-    if (network.available()){
-  		RF24NetworkHeader header;
-  		payload_t payload;
-  		network.read(header, &payload, sizeof(payload));
-  		return payload.value;
+	    if (network.available()){
+	  		RF24NetworkHeader header;
+	  		payload_t payload;
+	  		network.read(header, &payload, sizeof(payload));
+	  		return payload.value;
 		}
 	}
  return 2000;
