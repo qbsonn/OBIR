@@ -49,6 +49,18 @@ enum messageCodes
 
 };
 
+enum messageMiniTypes{
+	GET_POTEN = 1,
+	GET_LAMP = 2,
+	SET_LAMP = 3,
+	START_OBS = 4,
+	NEW_VALUE_OBS = 5,
+	STOP_OBS = 6,
+	VALUE = 7,
+	PACKET_LOST = 20,
+	OK = 200
+};
+
 
 
 

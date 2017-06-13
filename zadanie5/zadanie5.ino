@@ -8,6 +8,8 @@
 
 #include "enums.h"
 #include "structures.h"
+#include "simpleOperations.h"
+#include "methodsToMini.h"
 
 byte mac[] = {
 	0x00, 0xAA, 0xBB, 0xCC, 0xDE, 0xFA
@@ -24,11 +26,9 @@ short localPort = 1244;
 const char* wellKnownCore = "</potentiometr>;rt=\"Potentiometr value\";ct=0;if=\"sensor\";,</lamp>;rt=\"Lamp value\";ct=0;</loss>;rt=\"Loss metric\";ct=0;";
 byte wellKnownSize = 117;
 
-RF24 radio(7, 8);               // nRF24L01(+) radio attached using Getting Started board
-RF24Network network(radio);      // Network uses that radio
 
 const uint16_t this_node = 00;    // Address of our node in Octal format ( 04,031, etc)
-const uint16_t other_node = 01;
+
 
 byte packetBuffer[MAX_BUFFER];
 
@@ -39,18 +39,6 @@ byte observersNumber = 0;
 byte lossPacketNumber = 0;
 byte RTT = 0;
 short latency = 0;
-
-bool areStringsEqual(const char *c1, const char *c2, byte c1Size, byte c2Size)
-{
-	if (c1Size !=c2Size)
-		return false;
-	for (int i = 0; i < c1Size; i++)
-	{
-		if (c1[i] != c2[i])
-			return false;
-	}
-	return true;
-}
 
 
 
@@ -318,11 +306,8 @@ void responseForPut(CoapPacket *cPacket) {
 			
 		}
 		else {
-			Serial.print("lamp: ");
-			Serial.println(lampNewValue);
-			sendPutLampMessage(lampNewValue);
-			short answer=receiveValueFromMini();
-			if (answer==200)
+			bool ok = putLampValue(lampNewValue);
+			if (ok)
 			{
 				responsePacket.code = CHANGED;
 				responsePacket.optionsNumber =1;
@@ -348,7 +333,7 @@ void responseForPut(CoapPacket *cPacket) {
 				options[0].optionType = CONTENT_FORMAT;
 				options[0].optionLength = 0;
 				responsePacket.options = options;
-				responsePacket.payload= new byte[3];
+				responsePacket.payload= new byte[3]; // TODO
 				responsePacket.payload[0]='B';
 				responsePacket.payload[1]='A';
 				responsePacket.payload[2]='D';
@@ -565,11 +550,15 @@ void responseForGet(CoapPacket *cPacket)
 				registerObserver(cPacket);
 			}
 
-			sendGetValueMessage(1);
-			uint16_t receiveValue=receiveValueFromMini();
-			Serial.print("Potenc: ");
-			Serial.println(receiveValue);
+			uint16_t receiveValue=getPotentiometrValue();
+			Serial.print("Potenc: "); Serial.println(receiveValue);
 
+			if (receiveValue == 2000){
+				// blad na mini, pakiet stracony
+					Serial.println("Pakiet stracony");
+					return;
+			}
+			
 			responsePacket.optionsNumber =1;
 			if (isObserve) {
 				responsePacket.optionsNumber = 2;
@@ -622,10 +611,13 @@ void responseForGet(CoapPacket *cPacket)
 				return;
 			}
 			else {
-				sendGetValueMessage(2);
-				uint16_t receiveValue=receiveValueFromMini();
-				Serial.println("lamp");
-				Serial.println(receiveValue);
+				uint16_t receiveValue=getLampValue();
+
+				if (receiveValue == 2000){
+					// blad na mini, pakiet stracony
+					Serial.println("Pakiet stracony");
+					return;
+				}
 
 				responsePacket.optionsNumber =1;
 				Option options[responsePacket.optionsNumber];
@@ -636,22 +628,7 @@ void responseForGet(CoapPacket *cPacket)
 
 				responsePacket.options = options;
 
-//			if (lampValue >= 1000)
-//				responsePacket.payloadLength = 4;
-//			else if (lampValue >= 100)
-//				responsePacket.payloadLength = 3;
-//			else if (lampValue >= 10)
-//				responsePacket.payloadLength = 2;
-//			else
-//				responsePacket.payloadLength = 1;
-//
-//			byte payload[responsePacket.payloadLength];
-//			uint16_t prevValue = 0;
-//			for (byte i=0; i<responsePacket.payloadLength; i++ ) {
-//				payload[i] = lampValue / pow(10,(responsePacket.payloadLength - i - 1)) - prevValue;
-//				prevValue = (prevValue + payload[i]) * 10;
-//				payload[i] += '0';
-//			}
+
 				if (receiveValue >= 1000)
 					responsePacket.payloadLength = 4;
 				else if (receiveValue >= 100)
@@ -661,8 +638,6 @@ void responseForGet(CoapPacket *cPacket)
 				else
 					responsePacket.payloadLength = 1;
 
-				//  byte* payload = (byte*) malloc(responsePacket.payloadLength * sizeof(byte));
-				Serial.println("new payload 1");
 				byte* payload = new byte[responsePacket.payloadLength];
 				uint16_t prevValue = 0;
 				for (byte i=0; i<responsePacket.payloadLength; i++ ) {
@@ -785,18 +760,19 @@ void registerObserver(CoapPacket *cPacket) {
 	if (observersNumber < 1) {
 		Serial.println("Register observer");
 
-		observer.address = udp.remoteIP();
-		observer.port = udp.remotePort();
-		observer.tokenLength = cPacket->tokenLength;
-		observer.token = new byte[observer.tokenLength];
-		memcpy(observer.token, cPacket->token, observer.tokenLength);
-
-		// Wyslac do mini
-		payload_t payload = { 4, 0};
-		RF24NetworkHeader header(other_node);
-		bool ok = network.write(header, &payload, sizeof(payload));
-
-		observersNumber++;
+		bool ok = registerObserverInMini();
+		
+		if (ok){
+			observer.address = udp.remoteIP();
+			observer.port = udp.remotePort();
+			observer.tokenLength = cPacket->tokenLength;
+			observer.token = new byte[observer.tokenLength];
+			memcpy(observer.token, cPacket->token, observer.tokenLength);
+			observersNumber++;
+		}
+		else{
+			// TODO wyslac wiadomosc ze nie ma lacznosci z mini
+		}
 	}
 }
 
@@ -819,7 +795,7 @@ void sendToObservers(uint16_t receiveValue) {
 		options[0].optionType = OBSERVE;
 		options[0].optionLength = 1;
 		options[0].optionValue = new byte[options[0].optionLength];
-		options[0].optionValue[0] = seqNumber++; // zmienic!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		options[0].optionValue[0] = seqNumber++;
 	
 		options[1].optionType = CONTENT_FORMAT;
 		options[1].optionLength = 0;
@@ -868,6 +844,9 @@ void sendToObservers(uint16_t receiveValue) {
 			delete [] responsePacket.payload;
 		}
 	}
+	else{
+		unregisterObserverInMini();
+	}
 }
 
 Block2Param parseBlock2(Option option) {
@@ -882,10 +861,8 @@ void stopObserving() {
 	if (observersNumber > 0) {
 		observersNumber = 0;
 	}
-	// wyslac do mini
-	payload_t payload = { 6, 0};
-	RF24NetworkHeader header(other_node);
-	bool ok = network.write(header, &payload, sizeof(payload));
+	
+	unregisterObserverInMini();
 }
 
 void responseForPing(CoapPacket *cPacket)
@@ -905,80 +882,6 @@ void responseForPing(CoapPacket *cPacket)
 
 	sendResponse(&responsePacket);
 }
-
-
-
-unsigned short getPotentiometrValueOptionSelected()
-{
-	Serial.println("[odbior wartosci otencjometru]");
-	sendGetValueMessage(1);
-	currentValue = receiveValueFromMini();
-	Serial.println(currentValue);
-	return currentValue;
-}
-
-
-bool sendGetValueMessage(byte type) {
-
-	network.update();
-
-	payload_t payload = { type, 0};
-	RF24NetworkHeader header(/*to node*/ other_node);
-	bool ok = network.write(header, &payload, sizeof(payload));
-
-	return ok;
-
-}
-
-unsigned short receiveValueFromMini() {
-	while(true)
-	{
-		network.update();
-
-		if (network.available()) {
-			RF24NetworkHeader header;
-			payload_t payload;
-			network.read(header, &payload, sizeof(payload));
-			return payload.value;
-		}
-	}
-	return 2000;
-}
-
-
-bool sendPutLampMessage(unsigned short value)
-{
-	network.update();
-
-	payload_t payload = {3,value};
-	RF24NetworkHeader header(/*to node*/ other_node);
-	bool ok = network.write(header, &payload, sizeof(payload));
-
-	return ok;
-
-
-}
-
-
-/*
-  void sendResponse(unsigned short value){
-  udp.beginPacket(udp.remoteIP(), udp.remotePort());
-
-    char response[4];
-    //itoa(currentValue,response,3);
-    response[0] = value/1000;
-    response[1] = (value-(response[0]*1000))/100;
-    response[2] = (value-(response[0]*1000) - response[1]*100)/10;
-    response[3] = (value-(response[0]*1000) - response[1]*100 - response[2]*10);
-
-    for (int i=0; i<4; i++)
-      response[i]=response[i]+'0';
-
-    int len = udp.write(response, 4);
-    udp.endPacket();
-  }
-
-*/
 
 void printCoapPacket(CoapPacket *cPacket) {
 	Serial.println();
@@ -1117,7 +1020,6 @@ void sendResponse(CoapPacket *cPacket, IPAddress address, uint16_t port) {
 }
 void sendResponse(CoapPacket *cPacket) {
 	sendResponse(cPacket, udp.remoteIP(), udp.remotePort());
-	//sendToObservers(100);
 }
 
 int calculateCoapPacketSize(CoapPacket *cPacket) {
@@ -1152,12 +1054,6 @@ int calculateCoapPacketSize(CoapPacket *cPacket) {
 	return size;
 }
 
-uint16_t power(byte base, byte number) {
-	uint16_t value = 1;
-	for (byte i=0; i< number; i++) {
-		value = value * base;
-	}
-	return value;
-}
+
 
 

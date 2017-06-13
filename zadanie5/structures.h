@@ -5,8 +5,8 @@ struct Observer {
 	byte *token;
 };
 
-struct payload_t {                 // Structure of our payload
-	unsigned short ms;
+struct payload_t {  
+	unsigned short type;
 	unsigned short value;
 };
 
@@ -32,6 +32,6 @@ struct CoapPacket
 	byte *token;
 	byte optionsNumber;
 	Option *options;
-	byte payloadLength; // nwm czy potrzebne
+	byte payloadLength;
 	byte *payload;
 };
