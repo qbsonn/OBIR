@@ -18,11 +18,11 @@ enum messageTypes{
 	OK = 200
 };
 
-const uint16_t this_node = 01;
-const uint16_t other_node = 00;
+const uint16_t this_node = 01;	// identyfikator tego wezla (Mini)
+const uint16_t other_node = 00;	// identyfikator Uno
 const int sendInterval = 1000; // co ile czasu jest mierzona wartosc potencjometru i wysylana do Uno, jesli wlaczone obserwowanie
 
-RF24 radio(7,8);
+RF24 radio(7,8);	// 7 i 8 to numery wyprowadzeń plytki Arduino, do ktorych dolaczono odpowiednio sygnaly CE i CSN ukladu radiowego
 RF24Network network(radio);
 RF24NetworkHeader header1(other_node);
 
@@ -37,7 +37,7 @@ void setup() {
 	pinMode(3, OUTPUT);	// latarka
 	SPI.begin();
 	radio.begin();
-	network.begin(30,this_node);
+	network.begin(30,this_node);	// ustalenie kanalu komunikacji radiowej i identyfikatora swojego wezla
 
 	analogWrite(3,0);
 	Serial.println("MINI setup finished");
@@ -66,6 +66,7 @@ void loop() {
 		network.read(header,&receivedPayload,sizeof(receivedPayload));
 		unsigned short sensorValue = 0;
 		unsigned short messageType = 0;
+		Serial.print("Received: "); Serial.println(receivedPayload.type);
 
 		if (receivedPayload.type == GET_POTEN) { // GET Potencjometru
 			sensorValue = analogRead(A0);
@@ -78,6 +79,7 @@ void loop() {
 		else if (receivedPayload.type == SET_LAMP) { // SET Lampki
 			lampValue = receivedPayload.value;
 			analogWrite(3,receivedPayload.value);
+			Serial.println(lampValue);
 			messageType = OK;
 		}
 		else if (receivedPayload.type == START_OBS) {	// Zacznij obserwowac

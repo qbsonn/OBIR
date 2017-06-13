@@ -1,9 +1,9 @@
-const uint16_t other_node = 01;
+const uint16_t other_node = 01;	// identyfikator Mini
 const uint16_t awaitTime = 1000; // liczba milisekund, oznacza czas oczekiwania na odpowiedz od Mini
 
-RF24 radio(7, 8);               // nRF24L01(+) radio attached using Getting Started board
+RF24 radio(7, 8);               // 7 i 8 to numery wyprowadzeń plytki Arduino, do ktorych dolaczono odpowiednio sygnaly CE i CSN ukladu radiowego
 RF24Network network(radio);      // Network uses that radio
-RF24NetworkHeader header(other_node);
+//RF24NetworkHeader header(other_node);
 
 
 // Metoda wysylajaca zadanie o zasob o okreslonym typie
@@ -11,6 +11,8 @@ bool sendGetValueMessage(byte type) {
 	network.update();
 
 	payload_t payload = { type, 0};
+	RF24NetworkHeader header(other_node);
+
 	bool ok = network.write(header, &payload, sizeof(payload));
 
 	return ok;
@@ -24,9 +26,10 @@ payload_t receiveMessageFromMini(byte type) {
 	{
 		network.update();
 		if (network.available()) {
-			//RF24NetworkHeader header;
+			RF24NetworkHeader header;
 			payload_t payload;
 			network.read(header, &payload, sizeof(payload));
+			Serial.print("Odebrano: "); Serial.println(payload.value);
 			if (payload.type == type)
 				return payload;
 		}
@@ -57,7 +60,9 @@ unsigned short getLampValue(){
 bool putLampValue(unsigned short value){
 	network.update();
 
-	payload_t payload = {SET_LAMP,value};
+	RF24NetworkHeader header(other_node);
+
+	payload_t payload = {SET_LAMP, value};
 	bool ok = network.write(header, &payload, sizeof(payload));
 
 	payload_t receivedPayload = receiveMessageFromMini(OK);
@@ -69,7 +74,8 @@ bool putLampValue(unsigned short value){
 
 bool registerObserverInMini(){
 	network.update();
-	
+	RF24NetworkHeader header(other_node);
+
 	payload_t payload = { START_OBS, 0};
 	bool ok = network.write(header, &payload, sizeof(payload));
 
@@ -82,7 +88,8 @@ bool registerObserverInMini(){
 
 bool unregisterObserverInMini(){
 	network.update();
-	
+	RF24NetworkHeader header(other_node);
+
 	payload_t payload = { STOP_OBS, 0};
 	bool ok = network.write(header, &payload, sizeof(payload));
 
@@ -92,5 +99,17 @@ bool unregisterObserverInMini(){
 	else
 		return false;
 }
+
+unsigned short receiveObsValue(){
+	payload_t payload;
+	RF24NetworkHeader header(other_node);
+
+	network.read(header, &payload, sizeof(payload));
+	if (payload.type == NEW_VALUE_OBS)
+		return payload.value;
+	else return 2000;
+}
+
+
 
 
