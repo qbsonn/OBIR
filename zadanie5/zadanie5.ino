@@ -6,6 +6,9 @@
 #include <RF24.h>
 #include <SPI.h>
 
+#include "enums.h"
+#include "structures.h"
+
 byte mac[] = {
 	0x00, 0xAA, 0xBB, 0xCC, 0xDE, 0xFA
 };
@@ -27,93 +30,9 @@ RF24Network network(radio);      // Network uses that radio
 const uint16_t this_node = 00;    // Address of our node in Octal format ( 04,031, etc)
 const uint16_t other_node = 01;
 
-
-struct Observer {
-	IPAddress address;
-	uint16_t port;
-	byte tokenLength;
-	byte *token;
-};
-
-struct payload_t {                 // Structure of our payload
-	unsigned short ms;
-	unsigned short value;
-};
-
-
 byte packetBuffer[MAX_BUFFER];
 
 unsigned short valueP;
-
-struct Block2Param {
-	byte blockNumber;
-	byte blockSize;
-};
-
-struct Option
-{
-	uint16_t optionType;
-	uint16_t optionLength;
-	byte *optionValue;
-};
-
-struct CoapPacket
-{
-	byte ver;
-	byte type;
-	byte tokenLength;
-	byte code;
-	byte messageID[2];
-	byte *token;
-	byte optionsNumber;
-	Option *options;
-	byte payloadLength; // nwm czy potrzebne
-	byte *payload;
-};
-
-enum messageTypes
-{
-	CON = 0, NON = 1, ACK = 2, RST = 3
-};
-
-enum uriPaths
-{
-	WELL_KNOWN_CORE = 1, POTENTIOMETR = 2, LAMP = 3, LOSS = 4
-};
-
-enum acceptedFormats
-{
-	PLAIN = 0, LINK_FORMAT = 40
-};
-
-enum optionTypes
-{
-	OBSERVE = 6,
-	URI_PATH = 11,
-	CONTENT_FORMAT = 12,
-	ACCEPT = 17,
-	BLOCK2 = 23,
-	SIZE2 = 28
-};
-
-enum messageCodes
-{
-	EMPTY_MESSAGE,				//0.00
-	GET = 1,					//0.01
-	PUT = 3,					//0.03
-	CREATED = 65,				//2.01
-	CHANGED= 68,        		//2.04
-	CONTENT = 69,				//2.05
-	BAD_REQUEST = 128,			//4.00
-	BAD_OPTION = 130, 			//4.02
-	NOT_FOUND = 132,			//4.04
-	NOT_ALLOWED = 133,			//4.05
-	NOT_ACCEPTABLE = 134,		//4.06
-	UNSUPPORTED_FORMAT= 143, 	//4.15
-	INTERNAL_SERVER_ERROR = 160,//5.00
-	SERVICE_UNAVAILABLE = 163 	//5.03
-
-};
 
 Observer observer;
 byte observersNumber = 0;
@@ -874,7 +793,7 @@ void registerObserver(CoapPacket *cPacket) {
 
 		// Wyslac do mini
 		payload_t payload = { 4, 0};
-		RF24NetworkHeader header(/*to node*/ other_node);
+		RF24NetworkHeader header(other_node);
 		bool ok = network.write(header, &payload, sizeof(payload));
 
 		observersNumber++;

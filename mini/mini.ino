@@ -2,108 +2,104 @@
 #include <RF24.h>
 #include <SPI.h>
 
-unsigned short sensorValue = 0;
-
-RF24 radio(7,8);               
-RF24Network network(radio);   
-
-const uint16_t this_node = 01;    
-const uint16_t other_node = 00;   
-
-const int sendInterval = 1000;
-
-struct payload_t {                 
-  unsigned short type;
-  unsigned short value;
+struct payload_t {
+	unsigned short type;
+	unsigned short value;
 };
 
-unsigned long interval = 1000;
-unsigned long last_sent=0;             
-unsigned long packets_sent;   
+enum messageTypes{
+	GET_POTEN = 1,
+	GET_LAMP = 2,
+	SET_LAMP = 3,
+	START_OBS = 4,
+	NEW_VALUE_OBS = 5,
+	STOP_OBS = 6,
+	VALUE = 7,
+	OK = 200
+};
 
-unsigned short lampValue = 0;
-signed short prevPotentioValue = 0;
-unsigned long lastSentMilis = 0;
+const uint16_t this_node = 01;
+const uint16_t other_node = 00;
+const int sendInterval = 1000; // co ile czasu jest mierzona wartosc potencjometru i wysylana do Uno, jesli wlaczone obserwowanie
 
-bool isObservable = false;
+RF24 radio(7,8);
+RF24Network network(radio);
+RF24NetworkHeader header1(other_node);
+
+unsigned short lampValue = 0;	// aktualna wartosc na lampie
+signed short prevPotentioValue = 0;	// ostatnia wartosc zmierzona na potencjometrze (zmienna uzywana do zasobu obserwowalnego)
+unsigned long lastSentMilis = 0;	// czas ostatniego wyslania wiadomosci observe
+
+bool isObservable = false;	// oznacza czy jest wlaczona obserwacja zasobu
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println("MINI setuppp");
+	Serial.begin(115200);
+	pinMode(3, OUTPUT);	// latarka
+	SPI.begin();
+	radio.begin();
+	network.begin(30,this_node);
 
-  pinMode(3, OUTPUT);
-  SPI.begin();
-  radio.begin();
-  network.begin(30,this_node);  
-  analogWrite(3,0);
+	analogWrite(3,0);
+	Serial.println("MINI setup finished");
 }
 
 void loop() {
-  network.update();                 
+	network.update();
 
-  if (isObservable && (millis() - lastSentMilis) >  sendInterval){
-  	signed short newPotentioValue = analogRead(A0);
-  	if (newPotentioValue > prevPotentioValue + 20 || newPotentioValue < prevPotentioValue - 20){
-      Serial.print("newValue ");
-      Serial.print(newPotentioValue);
-      Serial.print(" oldValue ");
-      Serial.print(prevPotentioValue);
-      Serial.println();
-  		payload_t obsPayload = { 5, newPotentioValue };
-  		prevPotentioValue = newPotentioValue;
-      
-  		sendPayloadToUno(obsPayload);
-      lastSentMilis = millis(); 
-  	}
-  }
-             
-  
-    while ( network.available() ) {     
-    
-      RF24NetworkHeader header;        
-      payload_t payload1;
-      network.read(header,&payload1,sizeof(payload1));
+	if (isObservable && (millis() - lastSentMilis) >  sendInterval) {	// jesli jest wlaczana obserwacja zasobu i uplynal odpowiedni czas od ostatniego wyslania wiadomosci
+		signed short newPotentioValue = analogRead(A0);
+		if (newPotentioValue > prevPotentioValue + 20 || newPotentioValue < prevPotentioValue - 20) { // porownanie czy wartosc zmienila sie wystarczajaco bardzo
+		
+			payload_t obsPayload = { NEW_VALUE_OBS, newPotentioValue };
+			prevPotentioValue = newPotentioValue;
 
-      if (payload1.type == 1){ // GET Potencjometru
-        sensorValue = analogRead(A0);
-        Serial.print("Potenciometr: "); Serial.println(sensorValue);
-      }
-      else if (payload1.type == 2){ // GET Lampki
-      	sensorValue = lampValue;
-      	Serial.print("Lampa: "); Serial.println(sensorValue);
-      }
-      else if (payload1.type == 3){ // SET Lampki
-      	lampValue = payload1.value;
-      	analogWrite(3,payload1.value);
-      	Serial.print("Lampa set: "); Serial.println(payload1.value);
-		sensorValue = 200; // OK
-      }
-      else if (payload1.type == 4){	// Zacznij obserwowac
-      	isObservable = true;
-      	prevPotentioValue = analogRead(A0);
-        Serial.println("Observe");
-      }
-      else if (payload1.type == 6){ // stop obserwowania
-      	isObservable = false;
-        Serial.println("Dont observe");
-      }
+			sendPayloadToUno(obsPayload);
+			lastSentMilis = millis();
+		}
+	}
 
-        
-	  payload_t payload = { sensorValue, sensorValue };
-	  sendPayloadToUno(payload);
-      
-  }
 
-  
+	while ( network.available() ) {
 
+		RF24NetworkHeader header;
+		payload_t receivedPayload;
+		network.read(header,&receivedPayload,sizeof(receivedPayload));
+		unsigned short sensorValue = 0;
+		unsigned short messageType = 0;
+
+		if (receivedPayload.type == GET_POTEN) { // GET Potencjometru
+			sensorValue = analogRead(A0);
+			messageType = VALUE;
+		}
+		else if (receivedPayload.type == GET_LAMP) { // GET Lampki
+			sensorValue = lampValue;
+			messageType = VALUE;
+		}
+		else if (receivedPayload.type == SET_LAMP) { // SET Lampki
+			lampValue = receivedPayload.value;
+			analogWrite(3,receivedPayload.value);
+			messageType = OK;
+		}
+		else if (receivedPayload.type == START_OBS) {	// Zacznij obserwowac
+			isObservable = true;
+			prevPotentioValue = analogRead(A0);
+			messageType = OK;
+		}
+		else if (receivedPayload.type == STOP_OBS) { // stop obserwowania
+			isObservable = false;
+			messageType = OK;
+		}
+
+		payload_t payload = { messageType, sensorValue };
+		sendPayloadToUno(payload);
+	}
 }
 
-void sendPayloadToUno(payload_t payload){
-	RF24NetworkHeader header1( other_node);
-	network.update(); 
+void sendPayloadToUno(payload_t payload) {
+	network.update();
 	bool ok = network.write(header1,&payload,sizeof(payload));
 }
-    
-    
-  
+
+
+
 
