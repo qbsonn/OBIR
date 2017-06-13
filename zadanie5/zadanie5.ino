@@ -18,8 +18,11 @@ byte mac[] = {
 EthernetUDP udp;
 short localPort = 1244;
 
-const byte MAX_BUFFER = 255; // wielkosc bufora
-byte packetBuffer[MAX_BUFFER];
+//const byte MAX_BUFFER = 255; // wielkosc bufora
+//byte packetBuffer[MAX_BUFFER];
+
+byte bufferSize;
+byte* packetBuffer;
 
 byte seqNumber = 67; // numer sekwencji do observe
 
@@ -31,16 +34,24 @@ const uint16_t this_node = 00;    // identyfikator tego wezla (Uno)
 Observer observer;
 byte observersNumber = 0;	// liczba obserwatorow, zaimplementowana obsluga tylko jedengo obserwatora
 
+NotAckPacket notAackPacket;	// wiadomosci do potwierdzenia, w razie koniecznosci retransmitowana 
+uint16_t retransmitTime = 1000;
+unsigned long prevRetransmitTime;
+bool isMessageConSent = false;
+byte retransmitCounter = 0;
 
 byte lossPacketNumber = 0;
 byte RTT = 0;
 short latency = 0;
+uint16_t lossMetric = 0;
 
 
 void setup() {
 	IPAddress ip(192, 168, 2, 140);
 	Serial.begin(115200);
-	Ethernet.begin(mac, ip);
+	//if (Ethernet.begin(mac) == 0){
+		Ethernet.begin(mac, ip);
+	//}
 	Serial.println(Ethernet.localIP());
 	udp.begin(localPort);
 
@@ -54,9 +65,10 @@ void setup() {
 
 void loop() {
 	int packetSize = udp.parsePacket(); // sprawdzenie czy odebrano pakiet
-
 	if (packetSize) { 
+		bufferSize = packetSize;
 		receivePacket();	// obsluga pakietu
+		
 	}
 
 
@@ -66,11 +78,30 @@ void loop() {
 		sendToObservers(receivedValue);
 	}
 
+	if (isMessageConSent){
+		if (millis() - prevRetransmitTime > retransmitTime){
+			if (retransmitCounter < 4){
+				lossMetric++;
+				retransmit();
+			}
+			else{
+				lossMetric++;
+				isMessageConSent = false;
+				retransmitCounter = 0;
+				if (notAackPacket.tokenLength > 0){
+					delete [] notAackPacket.token;
+				}
+				//strata pakietu
+			}
+		}
+	}
+
 }
 
-
 void receivePacket() {
-	int packetLength = udp.read(packetBuffer, MAX_BUFFER);	// zapisanie pakietu do bufora
+	packetBuffer = new byte[bufferSize];
+	int packetLength = udp.read(packetBuffer, bufferSize);
+//	int packetLength = udp.read(packetBuffer, MAX_BUFFER);	// zapisanie pakietu do bufora
 
 	// PARSOWANIE WIADOMOSCI
 	CoapPacket cPacket;
@@ -164,6 +195,8 @@ void receivePacket() {
 		cPacket.payloadLength = 0;
 	}
 	// KONIEC PARSOWANIA PAKIETU
+
+	delete [] packetBuffer;	// zwolnienie pamieci bufora
 	
 	handlePacket(&cPacket);	// obsluga pakietu
 
@@ -194,28 +227,44 @@ void handlePacket(CoapPacket *cPacket)
 		responseForPut(cPacket);
 	}
 	else if (cPacket->type == ACK) {
-		Serial.println("ACK");
+		handleACK(cPacket);
 	}
 	else if (cPacket->type == RST) {
 		stopObserving();
 	}
 	else {
-		responseErrorMessage(cPacket, NOT_ALLOWED, "Method not allowed", 18);
+		responseErrorMessage(cPacket,NON, NOT_ALLOWED, "Method not allowed", 18);
 	}
 }
 
-void responseErrorMessage(CoapPacket *cPacket, byte code, char* payload, byte payloadLength) {
+void handleACK(CoapPacket *cPacket){
+	if (cPacket->messageID[0] == notAackPacket.messageID[0] && cPacket->messageID[1] == notAackPacket.messageID[1]){
+		Serial.println("ACK potwierdzone");
+		isMessageConSent = false;
+		retransmitCounter = 0;
+		if (notAackPacket.tokenLength > 0){
+			delete [] notAackPacket.token;
+		}
+	}
+}
+
+void responseErrorMessage(CoapPacket *cPacket, byte type ,byte code, char* payload, byte payloadLength) {
 	CoapPacket responsePacket;
 
 	responsePacket.ver = 1;
-	responsePacket.type = NON;
+	responsePacket.type = type;
 	responsePacket.code = code;
 	responsePacket.tokenLength = cPacket->tokenLength;
 	responsePacket.messageID[0] = cPacket->messageID[0];
 	responsePacket.messageID[1] = cPacket->messageID[1];
 	responsePacket.token = cPacket->token;
 
-	responsePacket.optionsNumber = 0;
+	responsePacket.optionsNumber = 1;
+	Option options[1];
+	options[0].optionType = CONTENT_FORMAT;
+	options[0].optionLength = 0;
+	responsePacket.options = options;
+				
 	responsePacket.payloadLength = payloadLength;
 	responsePacket.payload = new byte[responsePacket.payloadLength];
 	memcpy(responsePacket.payload , payload, responsePacket.payloadLength);
@@ -239,6 +288,11 @@ void responseForPut(CoapPacket *cPacket) {
 	if (uriPathType == LAMP) {
 		unsigned short lampNewValue = 0;
 		bool wrongTypePayloadErrorFlag = false;
+
+		if (cPacket->payloadLength == 0){
+			responseErrorMessage(cPacket,NON,  BAD_REQUEST, "Give specific value", 19);
+			return;
+		}
 		for (byte i=0; i< cPacket->payloadLength; i++) {
 			byte digit = cPacket->payload[i] - '0';
 			if (digit < 0 || digit > 9) {
@@ -248,7 +302,7 @@ void responseForPut(CoapPacket *cPacket) {
 			lampNewValue = lampNewValue * 10 + digit;
 			if (lampNewValue>1000)
 			{
-				responseErrorMessage(cPacket, BAD_REQUEST, "Value too big. Max value = 1000", 31);
+				responseErrorMessage(cPacket,NON,  BAD_REQUEST, "Value too big. Max value = 1000", 31);
 				return;
 			}
 		}
@@ -281,6 +335,7 @@ void responseForPut(CoapPacket *cPacket) {
 			
 		}
 		else {
+			
 			bool ok = putLampValue(lampNewValue);	// wyslanie do Mini wiadomosci
 			if (ok)
 			{
@@ -291,28 +346,15 @@ void responseForPut(CoapPacket *cPacket) {
 				options[0].optionType = CONTENT_FORMAT;
 				options[0].optionLength = 0;
 				responsePacket.options = options;
-				responsePacket.payload= new byte[2];
-				responsePacket.payload[0]='O';
-				responsePacket.payload[1]='K';
 				responsePacket.payloadLength=2;
+				responsePacket.payload = new byte[responsePacket.payloadLength];
+				memcpy(responsePacket.payload , "OK", responsePacket.payloadLength);
 
 				delay(1);
 			}
 			else {
-				Serial.println("Wartosc nieustawiona");
-
-				responsePacket.code = SERVICE_UNAVAILABLE;
-				responsePacket.optionsNumber =1;
-				Option options[responsePacket.optionsNumber];
-
-				options[0].optionType = CONTENT_FORMAT;
-				options[0].optionLength = 0;
-				responsePacket.options = options;
-				responsePacket.payload= new byte[3]; // TODO
-				responsePacket.payload[0]='B';
-				responsePacket.payload[1]='A';
-				responsePacket.payload[2]='D';
-				responsePacket.payloadLength=3;
+				responseErrorMessage(cPacket, NON, SERVICE_UNAVAILABLE, "Cannot connect to mini", 22);
+				return;
 			}
 		}
 
@@ -322,7 +364,7 @@ void responseForPut(CoapPacket *cPacket) {
 			delete [] responsePacket.payload;
 	}
 	else {
-		responseErrorMessage(cPacket, NOT_ALLOWED, "Method not allowed", 18);
+		responseErrorMessage(cPacket,NON, NOT_ALLOWED, "Method not allowed", 18);
 	}
 }
 
@@ -398,7 +440,7 @@ void responseForGet(CoapPacket *cPacket)
 			isObservable = true;
 		}
 		else if (cPacket->options[i].optionType%2 == 1){	// opcja "krytyczna", ktorej nie obslugujemy
-			responseErrorMessage(cPacket, BAD_OPTION, "Option not supported!", 21);
+			responseErrorMessage(cPacket, RST, BAD_OPTION, "Option not supported!", 21);
 			return;
 		}
 	}
@@ -419,18 +461,18 @@ void responseForGet(CoapPacket *cPacket)
 		if (uriPathType == WELL_KNOWN_CORE)
 		{
 			if (isObservable) {
-				responseErrorMessage(cPacket, BAD_OPTION, "Option Observe not supported here", 33);
+				responseErrorMessage(cPacket, NON, BAD_OPTION, "Option Observe not supported here", 33);
 				return;
 			}
 			else {
-				//responsePacket.type = CON;
+				responsePacket.type = CON;
 
 				if (isSize2Opt) {
 					responsePacket.optionsNumber = 3;
 				} else {
 					responsePacket.optionsNumber = 2;
 				}
-
+		
 				deleteOptions = true;
 				Option* options = new Option[responsePacket.optionsNumber];
 
@@ -452,6 +494,20 @@ void responseForGet(CoapPacket *cPacket)
 
 				responsePacket.options = options;
 
+				if (notAackPacket.tokenLength > 0 && isMessageConSent){
+					delete [] notAackPacket.token;
+				}
+				notAackPacket.messageID[0] = responsePacket.messageID[0];
+				notAackPacket.messageID[1] = responsePacket.messageID[1];
+				notAackPacket.tokenLength = responsePacket.tokenLength;
+				notAackPacket.token = new byte[notAackPacket.tokenLength];
+				for (byte i=0; i< notAackPacket.tokenLength; i++){
+					notAackPacket.token[i] = responsePacket.token[i];
+				}
+				notAackPacket.address = udp.remoteIP();
+				notAackPacket.port = udp.remotePort();
+				retransmitTime = (rand() % 1000 )+ 2000;
+					
 				if (blockSizeIndex != 255) { // nie jest to pierwszy blok
 					delay(1);
 					Block2Param block = parseBlock2(cPacket->options[blockSizeIndex]);
@@ -478,6 +534,10 @@ void responseForGet(CoapPacket *cPacket)
 					responsePacket.payload = new char[responsePacket.payloadLength];
 					byte plus =(block.blockNumber) * power(2,4+block.blockSize);	// index stringa well-known/core od ktorego znaki maja byc kopiowane
 					memcpy(responsePacket.payload , wellKnownCore + plus, responsePacket.payloadLength);
+
+					notAackPacket.block.blockSize = block.blockSize;
+					notAackPacket.block.blockNumber = block.blockNumber;
+					
 					delay(1);
 				}
 				else {	// wysylanie pierwszego bloku
@@ -490,6 +550,9 @@ void responseForGet(CoapPacket *cPacket)
 					memcpy(responsePacket.payload, wellKnownCore, 32);
 					responsePacket.payloadLength = 32;
 
+					notAackPacket.block.blockSize = 1;
+					notAackPacket.block.blockNumber = 0;
+					
 					delay(1);
 				}
 			}
@@ -504,9 +567,8 @@ void responseForGet(CoapPacket *cPacket)
 			Serial.print("Potenc: "); Serial.println(receiveValue);
 
 			if (receiveValue == 2000){
-				// blad na mini, pakiet stracony TODO
-					Serial.println("Pakiet stracony");
-					return;
+				responseErrorMessage(cPacket, NON, SERVICE_UNAVAILABLE, "Cannot connect to mini", 22);
+				return;
 			}
 			
 			responsePacket.optionsNumber =1;
@@ -554,15 +616,14 @@ void responseForGet(CoapPacket *cPacket)
 		else if (uriPathType == LAMP)
 		{
 			if (isObservable) {
-				responseErrorMessage(cPacket, BAD_OPTION, "Option Observe not supported here", 33);
+				responseErrorMessage(cPacket, NON, BAD_OPTION, "Option Observe not supported here", 33);
 				return;
 			}
 			else {
 				uint16_t receiveValue = getLampValue();
-
+				
 				if (receiveValue == 2000){
-					// blad na mini, pakiet stracony TODO
-					Serial.println("Pakiet stracony");
+					responseErrorMessage(cPacket, NON, SERVICE_UNAVAILABLE, "Cannot connect to mini", 22);
 					return;
 				}
 
@@ -598,7 +659,7 @@ void responseForGet(CoapPacket *cPacket)
 		else if (uriPathType == LOSS)
 		{
 			if (isObservable) {
-				responseErrorMessage(cPacket, BAD_OPTION, "Option Observe not supported here", 33);
+				responseErrorMessage(cPacket, RST, BAD_OPTION, "Option Observe not supported here", 33);
 				return;
 			}
 			else {
@@ -685,6 +746,11 @@ void responseForGet(CoapPacket *cPacket)
 		}
 		
 	}
+	if (responsePacket.type == CON){
+		prevRetransmitTime= millis();
+		isMessageConSent = true;
+	}
+	//delay(500);
 	sendResponse(&responsePacket);
 
 	// Zwolnienie pamieci z optionValue
@@ -716,7 +782,7 @@ void registerObserver(CoapPacket *cPacket) {
 			observersNumber++;
 		}
 		else{	// mini nie wyslalo potwierdzenia, brak lacznosci z mini
-			// TODO wyslac wiadomosc ze nie ma lacznosci z mini
+			responseErrorMessage(cPacket, NON, SERVICE_UNAVAILABLE, "Cannot connect to mini", 22);
 		}
 	}
 }
@@ -805,12 +871,89 @@ void stopObserving() {
 	unregisterObserverInMini();
 }
 
+void retransmit(){
+
+	Serial.println("retransmisja");
+	Serial.print("block number: "); Serial.println(notAackPacket.block.blockNumber);
+	
+	CoapPacket responsePacket;
+	responsePacket.optionsNumber = 0;
+	responsePacket.payloadLength = 0;
+	
+	responsePacket.ver = 1;
+	responsePacket.type = CON;
+	responsePacket.tokenLength = notAackPacket.tokenLength;
+	responsePacket.code = CONTENT;
+	responsePacket.messageID[0] = notAackPacket.messageID[0];
+	responsePacket.messageID[1] = notAackPacket.messageID[1] ;
+	// TOKEN
+	responsePacket.token = notAackPacket.token;
+
+	responsePacket.optionsNumber = 2;
+	Option* options = new Option[responsePacket.optionsNumber];
+
+	options[0].optionType = CONTENT_FORMAT;
+	options[0].optionLength = 1;
+	options[0].optionValue = new byte[options[0].optionLength];
+	options[0].optionValue[0] = LINK_FORMAT; //core link format
+
+	options[1].optionType = BLOCK2;
+	options[1].optionLength = 1;
+	options[1].optionValue = new byte[options[1].optionLength];
+
+
+	Block2Param block = notAackPacket.block;
+
+	bool isNextBlock = false;
+	if(wellKnownSize > (block.blockNumber+1) * power(2,4+block.blockSize)) { // czy bedzie jeszcze jeden blok
+		isNextBlock = true;
+	}
+
+	options[1].optionValue[0] = block.blockNumber ;
+	options[1].optionValue[0] = options[1].optionValue[0] << 1;
+	if (isNextBlock) {
+		options[1].optionValue[0] = options[1].optionValue[0] + 1; // bedzie nastepny blok
+	}
+	options[1].optionValue[0] = options[1].optionValue[0] << 3;
+	options[1].optionValue[0] = options[1].optionValue[0] + block.blockSize; // 32 bajtowe bloki
+
+	responsePacket.options = options;
+
+
+	responsePacket.payloadLength = power(2,4+block.blockSize);
+
+	if (!isNextBlock) {
+		responsePacket.payloadLength = wellKnownSize - (block.blockNumber) * power(2,4+block.blockSize);
+	}
+
+	responsePacket.payload = new char[responsePacket.payloadLength];
+	byte plus =(block.blockNumber) * power(2,4+block.blockSize);	// index stringa well-known/core od ktorego znaki maja byc kopiowane
+	memcpy(responsePacket.payload , wellKnownCore + plus, responsePacket.payloadLength);
+	
+	Serial.print("payload length: "); Serial.println(responsePacket.payloadLength);
+	sendResponse(&responsePacket, notAackPacket.address, notAackPacket.port);
+
+	if (responsePacket.payloadLength > 0){
+		delete [] responsePacket.payload;
+	}
+	for (byte i=0; i<responsePacket.optionsNumber; i++ ) {
+		if (responsePacket.options[i].optionLength > 0) {
+			delete [] responsePacket.options[i].optionValue;
+		}
+	}
+	delete [] responsePacket.options;
+
+	prevRetransmitTime = millis();
+	retransmitCounter++;
+	retransmitTime *= 2;
+}
+
 void responseForPing(CoapPacket *cPacket)
 {
 	CoapPacket responsePacket;
 
 	responsePacket.ver = 1;
-	responsePacket.type = ACK;
+	responsePacket.type = RST;
 	responsePacket.code = (byte)0;
 	responsePacket.tokenLength = cPacket->tokenLength;
 	responsePacket.messageID[0] = cPacket->messageID[0];

@@ -39,7 +39,7 @@ void setup() {
 	radio.begin();
 	network.begin(30,this_node);	// ustalenie kanalu komunikacji radiowej i identyfikatora swojego wezla
 
-	analogWrite(3,0);
+	analogWrite(3,255);
 	Serial.println("MINI setup finished");
 }
 
@@ -74,12 +74,15 @@ void loop() {
 		}
 		else if (receivedPayload.type == GET_LAMP) { // GET Lampki
 			sensorValue = lampValue;
+			Serial.print("lamp: "); Serial.println(lampValue);
 			messageType = VALUE;
 		}
 		else if (receivedPayload.type == SET_LAMP) { // SET Lampki
 			lampValue = receivedPayload.value;
-			analogWrite(3,receivedPayload.value);
-			Serial.println(lampValue);
+			unsigned short mapValue = 1000 - lampValue; 
+			mapValue = map(mapValue, 0, 1000, 0, 255);
+			analogWrite(3, mapValue);
+			Serial.print("map: ");Serial.println(mapValue);
 			messageType = OK;
 		}
 		else if (receivedPayload.type == START_OBS) {	// Zacznij obserwowac

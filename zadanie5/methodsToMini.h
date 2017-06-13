@@ -49,7 +49,7 @@ unsigned short getPotentiometrValue(){
 }
 
 unsigned short getLampValue(){
-	sendGetValueMessage(GET_POTEN);
+	sendGetValueMessage(GET_LAMP);
 	payload_t payload = receiveMessageFromMini(VALUE);
 	if (payload.type != PACKET_LOST)
 		return payload.value;

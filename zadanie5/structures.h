@@ -35,3 +35,13 @@ struct CoapPacket
 	byte payloadLength;
 	byte *payload;
 };
+
+struct NotAckPacket{
+	byte messageID[2];
+	byte tokenLength;
+	byte* token;
+	IPAddress address;
+	uint16_t port;
+	Block2Param block;
+};
+
