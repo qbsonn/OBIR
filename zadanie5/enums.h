@@ -11,7 +11,9 @@ enum uriPaths
 	WELL_KNOWN_CORE = 1, 
 	POTENTIOMETR = 2, 
 	LAMP = 3, 
-	LOSS = 4
+	LOSS = 4,
+  DELAY = 5,
+  DELAY_VARIATION = 6
 };
 
 enum acceptedFormats
