@@ -38,15 +38,14 @@ NotAckPacket notAackPacket;	// wiadomosci do potwierdzenia, w razie koniecznosci
 uint16_t retransmitTime = 1000;
 unsigned long prevRetransmitTime;
 bool isMessageConSent = false;
-byte retransmitCounter = 0;
+byte retransmitCounter = 0; // licznik retransmisji
 
-byte lossPacketNumber = 0;
-byte RTT = 0;
-short latency = 0;
-uint16_t lossMetric = 0;
-unsigned short lastRTTTime = 0;
-unsigned short max_delay = 0;
-unsigned short min_delay = 1000;
+byte messageCounter = 0; // licznik wiadomosci 
+byte RTT = 0; // czas RTT
+short latency = 0; // wynik metryki delay
+uint16_t lossMetric = 0; 
+unsigned short max_delay = 0; // maksymalna wartosc dmetryki delay variation
+unsigned short min_delay = 1000; // minimalna wartosc metryki delay variation
 
 void setup() {
 	IPAddress ip(192, 168, 2, 140);
@@ -396,6 +395,7 @@ void responseForGet(CoapPacket *cPacket)
 
 	for(byte i=0; i< cPacket->optionsNumber; i++)	// Sprawdzenie opcji i ustawienie odpowiednich flag/zmiennych
 	{
+    // ustawiaie wartosci typu URI_PATH
 		if (cPacket->options[i].optionType==URI_PATH)
 		{
 			if (areStringsEqual(cPacket->options[i].optionValue, ".well-known",cPacket->options[i].optionLength, 11 )) {
@@ -660,19 +660,19 @@ void responseForGet(CoapPacket *cPacket)
 				responsePacket.payload = payload;
 			}
 		}
-		else if (uriPathType == DELAY || uriPathType == DELAY_VARIATION)
+		else if (uriPathType == DELAY || uriPathType == DELAY_VARIATION) // metryka delay oraz delay variation
 		{
-			if (isObservable) {
+			if (isObservable) { // sprawdzanie czy observe
 				responseErrorMessage(cPacket, RST, BAD_OPTION, "Option Observe not supported here", 33);
 				return;
 			}
 			else {
 				if(RTT != 0)
 				{
-					if (uriPathType == DELAY) {
+					if (uriPathType == DELAY) { // dla metryki delay zwiekszamy zmienna latency o kazda kolejna wartosc RTT
 						latency += RTT;
 					}
-					else {
+					else { // dla metryki delay variation w kazdej iteracji sprawdzamy najmniejsze oraz najwieksze opoznienie
 						if(RTT > max_delay)
 						{
 							max_delay = RTT;
@@ -681,15 +681,14 @@ void responseForGet(CoapPacket *cPacket)
 						{
 							min_delay = RTT;
 						}
-
-						lastRTTTime = RTT;
 					}
 				}
 
-				responsePacket.optionsNumber = 2;
+				responsePacket.optionsNumber = 2; // dla odpowiedzi przypisanie liczby opcji
 				deleteOptions = true;
 				Option* options = new Option[responsePacket.optionsNumber];
 
+        // dodawanie opcji
 				options[0].optionType = CONTENT_FORMAT;
 				options[0].optionLength = 0;
 
@@ -699,21 +698,23 @@ void responseForGet(CoapPacket *cPacket)
 
 				responsePacket.options = options;
 
-				Block2Param block = parseBlock2(cPacket->options[blockSizeIndex]);
+				Block2Param block = parseBlock2(cPacket->options[blockSizeIndex]); // parsowanie Block2
 
-				bool isNextBlock = true;
-				byte blockSize = 32;
+				bool isNextBlock = true; // zmienna przechowujaca informacje czy jest kolejny blok
+				byte blockSize = 32; // rozmiar bloku
 
 				options[1].optionValue[0] = 1;  // bedzie nastepny blok
-				if (lossPacketNumber == 99)
+				if (messageCounter == 99) // koniec mierzenia metryki, wysylanie odpowiedzi
 				{
-					isNextBlock = false;
+					isNextBlock = false; 
 					options[1].optionValue[0] = 0;  // nie ma kolejnego bloku
 					//wyswietl wynik
+          
 					signed short result = 0;
-					if (uriPathType == DELAY) {
+          
+					if (uriPathType == DELAY) { // generowanie wyniku dla metryki delay i czyszczenie zmiennych
 						result = latency/100;
-						lossPacketNumber = 0;
+						messageCounter = 0;
 						latency = 0;
 
 						if (result >= 1000) // obliczenie wielkosci payloadu
@@ -725,10 +726,11 @@ void responseForGet(CoapPacket *cPacket)
 						else if( result < 10)
 							responsePacket.payloadLength = 1;
 					}
-					else
+					else // wynik dla metryki delay variation
 					{
 						result = max_delay - min_delay;
-						lossPacketNumber = 0;
+            // czyszczenie zmiennych wykorzystywanych przez metryke delay variation
+						messageCounter = 0;
 						max_delay = 0;
 						min_delay = 1000;
 
@@ -741,6 +743,8 @@ void responseForGet(CoapPacket *cPacket)
 						else if( result < 10)
 							responsePacket.payloadLength = 1;
 					}
+
+          // tworzenie payloadu z wynikiem metryki
 					responsePacket.payload = new char[responsePacket.payloadLength];
 
 					byte* payload = new byte[responsePacket.payloadLength];
@@ -751,30 +755,30 @@ void responseForGet(CoapPacket *cPacket)
 						payload[i] += '0';
 					}
 					responsePacket.payload = payload;
-				}
-				else{
+				} 
+				else{ // dalsze mierzenie metryki
 
 					options[1].optionValue[0] = options[1].optionValue[0] << 3;
 					options[1].optionValue[0] = options[1].optionValue[0] + 1; // 32 bajtowe bloki
 	
-					responsePacket.payload = new char[4];
-					responsePacket.payloadLength = 4;
+					responsePacket.payload = new char[4]; // alokacja pamieci na payload testowy
+					responsePacket.payloadLength = 4; // dlugosc payload testowaego
 	
-					memcpy(responsePacket.payload , "test", responsePacket.payloadLength);
-					lossPacketNumber +=1;
+					memcpy(responsePacket.payload , "test", responsePacket.payloadLength); // zwracanie payload testowego
+					messageCounter +=1; // zwiekszenie licznika wiadomosci testowych
 					delay(1);
-					RTT = millis();
+					RTT = millis(); // mierzenie RTT
 				}
 			}
 		}
-		else if (uriPathType == LOSS)
+		else if (uriPathType == LOSS) // metryka LOSS
 		{
 			if (isObservable) {
 				responseErrorMessage(cPacket, RST, BAD_OPTION, "Option Observe not supported here", 33);
 				return;
 			}
-			responsePacket.optionsNumber = 1;
-			Option* options = new Option[responsePacket.optionsNumber];
+			responsePacket.optionsNumber = 1; // jedna opcja
+			Option* options = new Option[responsePacket.optionsNumber]; // tworzenie opcji
 			deleteOptions = true;
 			
 			options[0].optionType = CONTENT_FORMAT;
@@ -793,6 +797,7 @@ void responseForGet(CoapPacket *cPacket)
 
 			responsePacket.payload = new char[responsePacket.payloadLength];
 
+      // tworzenie payloadu odpowiedzi z wynikiem metryki LOSS
 			byte* payload = new byte[responsePacket.payloadLength];
 			uint16_t prevValue = 0; // zmienna pomocnicza do wypelniania payloadu
 			for (byte i=0; i<responsePacket.payloadLength; i++ ) { // wypelnienie payloadu
@@ -800,8 +805,8 @@ void responseForGet(CoapPacket *cPacket)
 				prevValue = (prevValue + payload[i]) * 10;
 				payload[i] += '0';
 			}
-
-			responsePacket.payload = payload;
+     
+			responsePacket.payload = payload; // dodanie stworzonego payloadu do odpowiedzi
 		}
 		else {
 			responsePacket.code = NOT_FOUND; //4.04
