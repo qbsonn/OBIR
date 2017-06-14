@@ -29,7 +29,6 @@ payload_t receiveMessageFromMini(byte type) {
 			RF24NetworkHeader header;
 			payload_t payload;
 			network.read(header, &payload, sizeof(payload));
-			Serial.print("Odebrano: "); Serial.println(payload.value);
 			if (payload.type == type)
 				return payload;
 		}
